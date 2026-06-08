@@ -249,6 +249,25 @@ def emit_messages(run: AnalysisResult, quiet: bool) -> None:
         print(message)
 
 
+def build_eatr_cdf_plot_payload(data, event, final_time_indices, log_average_exp, log_k: float, cores: int, log_trick: bool):
+    event = np.asarray(event, dtype=bool)
+    if event.sum() == 0:
+        return {"time": [], "ecdf": [], "fit": []}
+    final_times = np.array([traj[-1, 0] for traj in data], dtype=float)
+    transitioned_times = final_times[event]
+    transitioned_indices = np.asarray(final_time_indices, dtype=int)[event]
+    order = np.argsort(transitioned_times)
+    sorted_times = transitioned_times[order]
+    sorted_indices = transitioned_indices[order]
+    ecdf = np.arange(1, len(sorted_times) + 1, dtype=float) / len(data)
+    fit = RM.EATR_CDF(sorted_indices, np.exp(log_k), log_average_exp, cores=cores, logTrick=log_trick)
+    return {
+        "time": sorted_times.tolist(),
+        "ecdf": ecdf.tolist(),
+        "fit": np.asarray(fit, dtype=float).tolist(),
+    }
+
+
 def analyze(args: argparse.Namespace) -> AnalysisResult:
     if args.threads > 1 and args.cores == 1:
         args.cores = args.threads
@@ -470,6 +489,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
                 run.results["EATR MLE gamma std"] = np.std(sample[:, 1])
             seed = seed if seed is None else seed + 1
         log_average_exp = RM.avg_exponential(data, beta, run.results["EATR MLE gamma"], bias_shift=args.barrier)
+        run.results["EATR MLE CDF plot"] = build_eatr_cdf_plot_payload(data, event, final_time_indices, log_average_exp, run.results["EATR MLE ln k"], args.cores, args.logtrick)
         ks_stat, p = ks_1samp(final_time_indices[event], lambda idx: RM.EATR_CDF(idx, np.exp(run.results["EATR MLE ln k"]), log_average_exp, cores=args.cores, logTrick=args.logtrick))
         run.results["EATR MLE KS stat"] = ks_stat
         run.results["EATR MLE p value"] = p
@@ -509,6 +529,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
                 run.results["EATR CDF gamma std"] = np.std(sample[:, 1])
             seed = seed if seed is None else seed + 1
         log_average_exp = RM.avg_exponential(data, beta, run.results["EATR CDF gamma"], bias_shift=args.barrier)
+        run.results["EATR CDF plot"] = build_eatr_cdf_plot_payload(data, event, final_time_indices, log_average_exp, run.results["EATR CDF ln k"], args.cores, args.logtrick)
         ks_stat, p = ks_1samp(final_time_indices[event], lambda idx: RM.EATR_CDF(idx, np.exp(run.results["EATR CDF ln k"]), log_average_exp, cores=args.cores, logTrick=args.logtrick))
         run.results["EATR CDF KS stat"] = ks_stat
         run.results["EATR CDF p value"] = p

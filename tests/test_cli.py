@@ -64,6 +64,10 @@ class CliTests(unittest.TestCase):
             self.assertIn("EATR MLE gamma", payload)
             self.assertIn("EATR MLE ln k CI", payload)
             self.assertIn("EATR MLE gamma CI", payload)
+            self.assertIn("EATR MLE CDF plot", payload)
+            self.assertEqual(sorted(payload["EATR MLE CDF plot"]), ["ecdf", "fit", "time"])
+            self.assertEqual(len(payload["EATR MLE CDF plot"]["time"]), len(payload["EATR MLE CDF plot"]["ecdf"]))
+            self.assertEqual(len(payload["EATR MLE CDF plot"]["time"]), len(payload["EATR MLE CDF plot"]["fit"]))
 
     @unittest.skipUnless(find_spec("numpy") and find_spec("scipy"), "numpy and scipy are required")
     def test_rates_cli_writes_json_output(self):
@@ -289,13 +293,14 @@ class CliTests(unittest.TestCase):
             self.assertTrue((tmp_path / "flooding_diagnostics.png").exists())
 
     @unittest.skipUnless(find_spec("numpy") and find_spec("scipy"), "numpy and scipy are required")
-    def test_plot_results_cli_writes_regular_series_figure(self):
+    def test_plot_results_cli_writes_regular_series_and_cdf_figures(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             repo_root = Path(__file__).resolve().parents[1]
-            input1 = tmp_path / "a.json"
-            input2 = tmp_path / "b.json"
+            input1 = tmp_path / "pace_1ps.json"
+            input2 = tmp_path / "pace_10ps.json"
             output = tmp_path / "regular.png"
+            cdf_output = tmp_path / "regular_cdf.png"
 
             input1.write_text(
                 json.dumps(
@@ -304,8 +309,11 @@ class CliTests(unittest.TestCase):
                         "EATR MLE gamma": 0.2,
                         "EATR MLE ln k std": 0.1,
                         "EATR MLE gamma std": 0.02,
-                        "EATR CDF ln k": 1.1,
-                        "EATR CDF gamma": 0.25,
+                        "EATR MLE CDF plot": {
+                            "time": [1.0, 2.0, 3.0],
+                            "ecdf": [0.5, 0.75, 1.0],
+                            "fit": [0.4, 0.7, 0.95],
+                        },
                     }
                 ),
                 encoding="utf-8",
@@ -317,8 +325,11 @@ class CliTests(unittest.TestCase):
                         "EATR MLE gamma": 0.4,
                         "EATR MLE ln k std": 0.2,
                         "EATR MLE gamma std": 0.03,
-                        "EATR CDF ln k": 2.1,
-                        "EATR CDF gamma": 0.45,
+                        "EATR MLE CDF plot": {
+                            "time": [1.5, 2.5, 3.5],
+                            "ecdf": [0.4, 0.7, 1.0],
+                            "fit": [0.35, 0.68, 0.98],
+                        },
                     }
                 ),
                 encoding="utf-8",
@@ -333,14 +344,11 @@ class CliTests(unittest.TestCase):
                     "-i",
                     str(input1),
                     str(input2),
-                    "--xvalues",
-                    "1",
-                    "10",
                     "--labels",
-                    "a",
-                    "b",
+                    "pace 1 ps",
+                    "pace 10 ps",
                     "--method",
-                    "eatr-comparison",
+                    "eatr-mle",
                     "-o",
                     str(output),
                 ],
@@ -353,3 +361,4 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(output.exists())
+            self.assertTrue(cdf_output.exists())

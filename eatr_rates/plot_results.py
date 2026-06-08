@@ -55,6 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     regular.add_argument("--noline", action="store_true", help="remove the connecting lines in the plots")
     regular.add_argument("--truerate", type=np.float64, default=None, help="optional true rate to compare to results")
     regular.add_argument("-o", "--output", type=str, default="regular_series.png", help="output figure path")
+    regular.add_argument("--cdf-output", type=str, default=None, help="optional output path for the per-pace empirical-vs-fit CDF figure; defaults to a sibling *_cdf file when CDF plot data are present")
 
     flooding = subparsers.add_parser("flooding", help="plot figures from one eatr-flooding-analysis JSON output")
     flooding.add_argument("-i", "--input", required=True, help="JSON output from eatr-flooding-analysis")
@@ -217,6 +218,52 @@ def plot_flooding_payload(
     return written_paths
 
 
+def cdf_plot_key_for_method(method: str, payloads: list[dict[str, object]]) -> str | None:
+    if method == "eatr-cdf":
+        return "EATR CDF plot"
+    if method == "eatr-mle":
+        return "EATR MLE CDF plot"
+    if method == "eatr-comparison":
+        if all("EATR CDF plot" in payload for payload in payloads):
+            return "EATR CDF plot"
+        if all("EATR MLE CDF plot" in payload for payload in payloads):
+            return "EATR MLE CDF plot"
+    return None
+
+
+def default_cdf_output_path(path: str) -> str:
+    output_path = Path(path)
+    return str(output_path.with_name(f"{output_path.stem}_cdf{output_path.suffix}"))
+
+
+def plot_regular_series_cdfs(payloads, labels, key: str, output: str) -> None:
+    plt = pyplot()
+    fig, ax = plt.subplots(figsize=(3.35, 2.23), constrained_layout=True)
+    colors = [SET_COLORS[idx % len(SET_COLORS)] for idx in range(len(payloads))]
+    positive_times = []
+    for payload, label, color in zip(payloads, labels, colors):
+        plot_payload = payload[key]
+        times = np.array(plot_payload["time"], dtype=float)
+        ecdf = np.array(plot_payload["ecdf"], dtype=float)
+        fit = np.array(plot_payload["fit"], dtype=float)
+        if np.any(times <= 0.0):
+            raise SystemExit("CDF plots require strictly positive transition times for log-scaled x-axis output.")
+        positive_times.append(times)
+        ax.plot(times, fit, color=color, linewidth=1.4, label=label)
+        ax.plot(times, ecdf, linestyle="none", marker="o", markersize=3.2, color=color)
+    ax.text(0.03, 0.97, "points: empirical CDF\nlines: EATR fit", transform=ax.transAxes, va="top", ha="left", fontsize=8.5)
+    ax.set_xscale("log")
+    if positive_times:
+        apply_xlimits(ax, np.concatenate(positive_times), "log")
+    ax.set_xlabel("Transition time (s)")
+    ax.set_ylabel("CDF")
+    ax.set_ylim(-0.02, 1.02)
+    style_axis(ax)
+    ax.legend(loc="lower right", handlelength=1.5)
+    fig.savefig(output, dpi=220)
+    plt.close(fig)
+
+
 def plot_regular_series(args: argparse.Namespace) -> int:
     if args.xvalues is not None and len(args.input) != len(args.xvalues):
         raise SystemExit("The number of --input files must match the number of --xvalues.")
@@ -315,6 +362,11 @@ def plot_regular_series(args: argparse.Namespace) -> int:
 
     fig.savefig(args.output, dpi=220)
     plt.close(fig)
+
+    cdf_key = cdf_plot_key_for_method(args.method, payloads)
+    if cdf_key is not None and all(cdf_key in payload for payload in payloads):
+        cdf_output = args.cdf_output if args.cdf_output is not None else default_cdf_output_path(args.output)
+        plot_regular_series_cdfs(payloads, labels, cdf_key, cdf_output)
     return 0
 
 
