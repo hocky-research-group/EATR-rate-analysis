@@ -19,6 +19,53 @@ def _write_colvar(path: Path, rows) -> None:
 
 class CliTests(unittest.TestCase):
     @unittest.skipUnless(find_spec("numpy") and find_spec("scipy"), "numpy and scipy are required")
+    def test_rates_cli_bootstrap_threads_writes_ci_output(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            colvar1 = tmp_path / "traj1.colvar"
+            colvar2 = tmp_path / "traj2.colvar"
+            colvar3 = tmp_path / "traj3.colvar"
+            output = tmp_path / "rates_bootstrap.json"
+            repo_root = Path(__file__).resolve().parents[1]
+
+            _write_colvar(colvar1, [(0, 0, 0.1), (1, 0, 0.15), (2, 0, 0.2), (3, 0, 0.25)])
+            _write_colvar(colvar2, [(0, 0, 0.2), (1, 0, 0.25), (2, 0, 0.3), (3, 0, 0.35)])
+            _write_colvar(colvar3, [(0, 0, 0.3), (1, 0, 0.35), (2, 0, 0.4), (3, 0, 0.45)])
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "eatr_rates",
+                    "-i",
+                    str(colvar1),
+                    str(colvar2),
+                    str(colvar3),
+                    "-e",
+                    "-b",
+                    "--numboots",
+                    "6",
+                    "--threads",
+                    "2",
+                    "-q",
+                    "-o",
+                    str(output),
+                ],
+                cwd=tmp_path,
+                env={**os.environ, "PYTHONPATH": str(repo_root)},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertIn("EATR MLE ln k", payload)
+            self.assertIn("EATR MLE gamma", payload)
+            self.assertIn("EATR MLE ln k CI", payload)
+            self.assertIn("EATR MLE gamma CI", payload)
+
+    @unittest.skipUnless(find_spec("numpy") and find_spec("scipy"), "numpy and scipy are required")
     def test_rates_cli_writes_json_output(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
@@ -88,6 +135,88 @@ class CliTests(unittest.TestCase):
                 output.read_text(encoding="utf-8").splitlines(),
                 ["a.colvar | a.log", "b.colvar | b.log"],
             )
+
+    @unittest.skipUnless(find_spec("numpy") and find_spec("scipy"), "numpy and scipy are required")
+    def test_flooding_cli_bootstrap_threads_writes_uncertainty_output(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            repo_root = Path(__file__).resolve().parents[1]
+            output = tmp_path / "flooding_bootstrap.json"
+
+            set1_traj1 = tmp_path / "set1_traj1.colvar"
+            set1_traj2 = tmp_path / "set1_traj2.colvar"
+            set1_traj3 = tmp_path / "set1_traj3.colvar"
+            set2_traj1 = tmp_path / "set2_traj1.colvar"
+            set2_traj2 = tmp_path / "set2_traj2.colvar"
+            set2_traj3 = tmp_path / "set2_traj3.colvar"
+            _write_colvar(set1_traj1, [(0, 0, 0.1), (1, 0, 0.2), (2, 0, 0.3), (3, 0, 0.4)])
+            _write_colvar(set1_traj2, [(0, 0, 0.12), (1, 0, 0.22), (2, 0, 0.32), (3, 0, 0.42)])
+            _write_colvar(set1_traj3, [(0, 0, 0.14), (1, 0, 0.24), (2, 0, 0.34), (3, 0, 0.44)])
+            _write_colvar(set2_traj1, [(0, 0, 0.4), (1, 0, 0.5), (2, 0, 0.6), (3, 0, 0.7)])
+            _write_colvar(set2_traj2, [(0, 0, 0.42), (1, 0, 0.52), (2, 0, 0.62), (3, 0, 0.72)])
+            _write_colvar(set2_traj3, [(0, 0, 0.44), (1, 0, 0.54), (2, 0, 0.64), (3, 0, 0.74)])
+
+            log_paths = []
+            for index in range(6):
+                log_path = tmp_path / f"log{index}.log"
+                log_path.write_text("#! SET COMMIT(T)ED TO BASIN 1\n", encoding="utf-8")
+                log_paths.append(log_path)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "eatr_rates.rates_eatr_opes",
+                    "-i",
+                    str(set1_traj1),
+                    str(set1_traj2),
+                    str(set1_traj3),
+                    "--barrier",
+                    "1",
+                    "-i",
+                    str(set2_traj1),
+                    str(set2_traj2),
+                    str(set2_traj3),
+                    "--barrier",
+                    "2",
+                    "--logfiles",
+                    str(log_paths[0]),
+                    str(log_paths[1]),
+                    str(log_paths[2]),
+                    "--logfiles",
+                    str(log_paths[3]),
+                    str(log_paths[4]),
+                    str(log_paths[5]),
+                    "--beta",
+                    "1.0",
+                    "--tcol",
+                    "0",
+                    "--vcol",
+                    "2",
+                    "--bootstrap",
+                    "--numboots",
+                    "6",
+                    "--threads",
+                    "2",
+                    "-q",
+                    "-o",
+                    str(output),
+                ],
+                cwd=tmp_path,
+                env={**os.environ, "PYTHONPATH": str(repo_root)},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertIn("bootstrap_logk0_std", payload)
+            self.assertIn("bootstrap_gamma_std", payload)
+            self.assertEqual(len(payload["bootstrap_iterations"]), 6)
+            self.assertTrue((tmp_path / "flooding_bootstrap_observed_rate.png").exists())
+            self.assertTrue((tmp_path / "flooding_bootstrap_ln_kobs_vs_acceleration.png").exists())
+            self.assertTrue((tmp_path / "flooding_bootstrap_diagnostics.png").exists())
 
     @unittest.skipUnless(find_spec("numpy") and find_spec("scipy"), "numpy and scipy are required")
     def test_flooding_cli_writes_json_and_plots(self):

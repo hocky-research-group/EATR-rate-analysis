@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -36,6 +37,13 @@ class AnalysisResult:
     event: np.ndarray
     results: dict[str, object] = field(default_factory=dict)
     messages: list[str] = field(default_factory=list)
+
+
+def thread_map(func, values, threads: int):
+    if threads <= 1:
+        return [func(value) for value in values]
+    with ThreadPoolExecutor(max_workers=threads) as executor:
+        return list(executor.map(func, values))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -87,7 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--initguess", type=np.float64, default=[None, None], help="the initial guess for lnk0 and gamma, respectively, in CDF fitting (DEFAULT: use iMetaD MLE estimate and γ = 0.9)", nargs=2)
     parser.add_argument("--seed", type=int, default=None, help="the random number generator seed to use (for repeatability) (DEFAULT: None)")
     parser.add_argument("--cores", type=int, default=1, help="the number of cores for multiprocessing (DEFAULT: 1, no multiprocessing)")
-    parser.add_argument("--threads", type=int, default=1, help="alias for analysis parallelism when you want to request worker count explicitly (DEFAULT: 1)")
+    parser.add_argument("--threads", type=int, default=1, help="worker count for bootstrap parallelism; also promotes --cores when left at 1 (DEFAULT: 1)")
     event_find.add_argument(
         "--maxlen",
         type=int,
@@ -164,6 +172,35 @@ def write_results(path: str, results: dict[str, object]) -> None:
         json.dump(json_ready(results), handle)
 
 
+def percentile_interval(values: np.ndarray, alpha: float = 0.05) -> list[float]:
+    lower = float(np.quantile(values, alpha / 2.0))
+    upper = float(np.quantile(values, 1.0 - alpha / 2.0))
+    return [lower, upper]
+
+
+def threaded_bootstrap(
+    sample: list[np.ndarray],
+    func,
+    nresamples: int,
+    *,
+    event: np.ndarray | None = None,
+    double: bool = False,
+    seed: int | None = None,
+    threads: int = 1,
+):
+    rng = np.random.default_rng(seed=seed)
+    sample_size = len(sample)
+    index_sets = rng.integers(0, sample_size, size=(nresamples, sample_size))
+
+    def worker(indices: np.ndarray):
+        resample = [sample[int(index)] for index in indices]
+        resampled_event = None if event is None else np.array([event[int(index)] for index in indices])
+        return func(resample, resampled_event)
+
+    results = thread_map(worker, index_sets, threads)
+    return np.array(results, dtype=float)
+
+
 def report_beta(run: AnalysisResult) -> None:
     add_message(run, f"Using β = {run.beta}")
 
@@ -172,23 +209,25 @@ def report_beta_from_temp(run: AnalysisResult, energyunit: float) -> None:
     add_message(run, f"Using β = 1/kBT = {run.beta}, with PLUMED energy unit equivalent to {energyunit} kJ/mol")
 
 
-def report_bootstrap_mode(run: AnalysisResult, bootstrap_enabled: bool, scipy_bootstrap: bool) -> None:
+def report_bootstrap_mode(run: AnalysisResult, bootstrap_enabled: bool, ci_bootstrap: bool, threaded_bootstrap_enabled: bool) -> None:
     if not bootstrap_enabled:
         return
-    if scipy_bootstrap:
+    if threaded_bootstrap_enabled and ci_bootstrap:
+        add_message(run, "Bootstrapping is activated. Will use threaded internal bootstrap (errors are 95% percentile confidence intervals).")
+    elif ci_bootstrap:
         add_message(run, "Bootstrapping is activated. Will use SciPy bootstrap method (errors are 95% confidence intervals).")
     else:
         add_message(run, "SciPy bootstrap method is not available. Will use internal bootstrap method (errors are standard deviations).")
 
 
-def report_method_result(run: AnalysisResult, method_label: str, log_key: str, ks_stat: float, p_value: float, bootstrap_enabled: bool, scipy_bootstrap: bool, gamma_key: str | None = None) -> None:
+def report_method_result(run: AnalysisResult, method_label: str, log_key: str, ks_stat: float, p_value: float, bootstrap_enabled: bool, ci_bootstrap: bool, gamma_key: str | None = None) -> None:
     if not bootstrap_enabled:
         if gamma_key is None:
             add_message(run, f"{method_label}: lnk0 = {run.results[log_key]} (s^-1); KS: {ks_stat}, p = {p_value}")
         else:
             add_message(run, f"{method_label}: lnk0 = {run.results[log_key]} (s^-1), γ = {run.results[gamma_key]}; KS: {ks_stat}, p = {p_value}")
         return
-    if scipy_bootstrap:
+    if ci_bootstrap:
         if gamma_key is None:
             ci = run.results[f"{log_key} CI"]
             add_message(run, f"{method_label}: lnk0 = {run.results[log_key]} (s^-1), 95% CI: {ci[0]} to {ci[1]}; KS: {ks_stat}, p = {p_value}")
@@ -211,8 +250,6 @@ def emit_messages(run: AnalysisResult, quiet: bool) -> None:
 
 
 def analyze(args: argparse.Namespace) -> AnalysisResult:
-    global boots_avail
-
     if args.threads > 1 and args.cores == 1:
         args.cores = args.threads
 
@@ -229,13 +266,14 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
     elif args.bayesopt:
         add_message(run, "The Bayesian Optimization module was not able to be loaded. Defaulting to local optimizers.")
 
-    if args.std:
-        boots_avail = False
+    use_threaded_bootstrap = args.bootstrap and args.threads > 1
+    use_scipy_bootstrap = args.bootstrap and boots_avail and not args.std and not use_threaded_bootstrap
+    bootstrap_ci = use_scipy_bootstrap or use_threaded_bootstrap
     if args.beta is not None or args.kt is not None:
         report_beta(run)
     else:
         report_beta_from_temp(run, args.energyunit)
-    report_bootstrap_mode(run, args.bootstrap, boots_avail)
+    report_bootstrap_mode(run, args.bootstrap, bootstrap_ci, use_threaded_bootstrap)
 
     if args.barrier > 0 and (args.ktrmle or args.ktrcdf or args.eatrmle or args.eatrcdf):
         add_message(run, "WARNING: Running KTR and/or EATR on OPES simulations using this analysis script is not expected to work properly! You should instead use the EATR-OPES method (not published yet).")
@@ -256,7 +294,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
         if not args.bootstrap:
             run.results["iMetaD MLE ln k"] = np.log(RM.iMetaD_invMRT_times(rescaled_times, event=event))
         else:
-            if boots_avail:
+            if use_scipy_bootstrap:
                 indices = list(range(len(data)))
                 run.results["iMetaD MLE ln k"] = np.log(RM.iMetaD_invMRT_times(rescaled_times, event=event))
                 res = bootstr(
@@ -267,6 +305,11 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
                     n_resamples=args.numboots,
                 )
                 run.results["iMetaD MLE ln k CI"] = res.confidence_interval
+            elif use_threaded_bootstrap:
+                sample = threaded_bootstrap(data, lambda subset, eve: RM.iMetaD_invMRT(subset, beta, event=eve, bias_shift=args.barrier), args.numboots, event=event, seed=seed, threads=args.threads)
+                log_sample = np.log(sample)
+                run.results["iMetaD MLE ln k"] = float(np.mean(log_sample))
+                run.results["iMetaD MLE ln k CI"] = percentile_interval(log_sample)
             else:
                 sample = RM.bootstrap(data, lambda subset, eve: RM.iMetaD_invMRT(subset, beta, event=eve, bias_shift=args.barrier), args.numboots, event=event, return_stat=True, seed=seed)
                 run.results["iMetaD MLE ln k"] = np.mean(np.log(sample))
@@ -278,13 +321,13 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
         ks_stat, p = ks_2samp(rvs1, rescaled_times[event])
         run.results["iMetaD MLE KS stat"] = ks_stat
         run.results["iMetaD MLE p value"] = p
-        report_method_result(run, "iMetaD MLE", "iMetaD MLE ln k", ks_stat, p, args.bootstrap, boots_avail)
+        report_method_result(run, "iMetaD MLE", "iMetaD MLE ln k", ks_stat, p, args.bootstrap, bootstrap_ci)
 
     if args.imetadcdf:
         if not args.bootstrap:
             run.results["iMetaD CDF ln k"] = np.log(RM.iMetaD_FitCDF_times(rescaled_times, event=event, k_bounds=k_bounds, k_guess=init_guess[0]))
         else:
-            if boots_avail:
+            if use_scipy_bootstrap:
                 indices = list(range(len(data)))
                 run.results["iMetaD CDF ln k"] = np.log(RM.iMetaD_FitCDF_times(rescaled_times, event=event, k_bounds=k_bounds, k_guess=init_guess[0]))
                 res = bootstr(
@@ -295,6 +338,11 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
                     n_resamples=args.numboots,
                 )
                 run.results["iMetaD CDF ln k CI"] = res.confidence_interval
+            elif use_threaded_bootstrap:
+                sample = threaded_bootstrap(data, lambda subset, eve: RM.iMetaD_FitCDF(subset, beta, event=eve, bias_shift=args.barrier, k_guess=init_guess[0]), args.numboots, event=event, seed=seed, threads=args.threads)
+                log_sample = np.log(sample)
+                run.results["iMetaD CDF ln k"] = float(np.mean(log_sample))
+                run.results["iMetaD CDF ln k CI"] = percentile_interval(log_sample)
             else:
                 sample = RM.bootstrap(data, lambda subset, eve: RM.iMetaD_FitCDF(subset, beta, event=eve, bias_shift=args.barrier, k_guess=init_guess[0]), args.numboots, event=event, return_stat=True, seed=seed)
                 run.results["iMetaD CDF ln k"] = np.mean(np.log(sample))
@@ -306,7 +354,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
         ks_stat, p = ks_2samp(rvs1, rescaled_times[event])
         run.results["iMetaD CDF KS stat"] = ks_stat
         run.results["iMetaD CDF p value"] = p
-        report_method_result(run, "iMetaD CDF", "iMetaD CDF ln k", ks_stat, p, args.bootstrap, boots_avail)
+        report_method_result(run, "iMetaD CDF", "iMetaD CDF ln k", ks_stat, p, args.bootstrap, bootstrap_ci)
 
     final_time_indices = np.array([int(len(traj) - 1) for traj in data])
     if args.ktrmle or args.ktrcdf:
@@ -318,7 +366,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
             run.results["KTR MLE ln k"] = np.log(result[0])
             run.results["KTR MLE gamma"] = result[1]
         else:
-            if boots_avail:
+            if use_scipy_bootstrap:
                 indices = list(range(len(data)))
                 result = RM.KTR_MLE_rate_VMB(vmb_average, final_time_indices, event=event, gamma_bounds=gamma_bounds, cores=args.cores, logTrick=args.logtrick, do_bopt=args.bayesopt)
                 res = bootstr(
@@ -332,6 +380,12 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
                 run.results["KTR MLE gamma"] = result[1]
                 run.results["KTR MLE ln k CI"] = [np.log(res.confidence_interval.low[0]), np.log(res.confidence_interval.high[0])]
                 run.results["KTR MLE gamma CI"] = [res.confidence_interval.low[1], res.confidence_interval.high[1]]
+            elif use_threaded_bootstrap:
+                sample = threaded_bootstrap(data, lambda subset, eve: RM.KTR_MLE_rate(subset, beta, event=eve, gamma_bounds=gamma_bounds, cores=args.cores, logTrick=args.logtrick, do_bopt=args.bayesopt, bias_shift=args.barrier), args.numboots, event=event, double=True, seed=seed, threads=args.threads)
+                run.results["KTR MLE ln k"] = float(np.mean(np.log(sample[:, 0])))
+                run.results["KTR MLE gamma"] = float(np.mean(sample[:, 1]))
+                run.results["KTR MLE ln k CI"] = percentile_interval(np.log(sample[:, 0]))
+                run.results["KTR MLE gamma CI"] = percentile_interval(sample[:, 1])
             else:
                 sample = RM.bootstrap(data, lambda subset, eve: RM.KTR_MLE_rate(subset, beta, event=eve, gamma_bounds=gamma_bounds, cores=args.cores, logTrick=args.logtrick, do_bopt=args.bayesopt, bias_shift=args.barrier), args.numboots, double=True, event=event, return_stat=True, seed=seed)
                 run.results["KTR MLE ln k"] = np.mean(np.log(sample[:, 0]))
@@ -342,7 +396,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
         ks_stat, p = ks_1samp(final_time_indices[event], lambda idx: RM.KTR_CDF(idx, np.exp(run.results["KTR MLE ln k"]), run.results["KTR MLE gamma"], vmb_average, cores=args.cores, logTrick=args.logtrick))
         run.results["KTR MLE KS stat"] = ks_stat
         run.results["KTR MLE p value"] = p
-        report_method_result(run, "KTR MLE", "KTR MLE ln k", ks_stat, p, args.bootstrap, boots_avail, gamma_key="KTR MLE gamma")
+        report_method_result(run, "KTR MLE", "KTR MLE ln k", ks_stat, p, args.bootstrap, bootstrap_ci, gamma_key="KTR MLE gamma")
 
     if args.ktrcdf:
         if not args.bootstrap:
@@ -350,7 +404,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
             run.results["KTR CDF ln k"] = np.log(result[0])
             run.results["KTR CDF gamma"] = result[1]
         else:
-            if boots_avail:
+            if use_scipy_bootstrap:
                 indices = list(range(len(data)))
                 result = RM.KTR_CDF_rate_VMB(vmb_average, final_time_indices, event=event, k_bounds=k_bounds, gamma_bounds=gamma_bounds, cores=args.cores, logTrick=args.logtrick, init_guess=init_guess, do_bopt=args.bayesopt)
                 res = bootstr(
@@ -364,6 +418,12 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
                 run.results["KTR CDF gamma"] = result[1]
                 run.results["KTR CDF ln k CI"] = [np.log(res.confidence_interval.low[0]), np.log(res.confidence_interval.high[0])]
                 run.results["KTR CDF gamma CI"] = [res.confidence_interval.low[1], res.confidence_interval.high[1]]
+            elif use_threaded_bootstrap:
+                sample = threaded_bootstrap(data, lambda subset, eve: RM.KTR_CDF_rate(subset, beta, event=eve, k_bounds=k_bounds, gamma_bounds=gamma_bounds, cores=args.cores, logTrick=args.logtrick, init_guess=init_guess, do_bopt=args.bayesopt, bias_shift=args.barrier), args.numboots, event=event, double=True, seed=seed, threads=args.threads)
+                run.results["KTR CDF ln k"] = float(np.mean(np.log(sample[:, 0])))
+                run.results["KTR CDF gamma"] = float(np.mean(sample[:, 1]))
+                run.results["KTR CDF ln k CI"] = percentile_interval(np.log(sample[:, 0]))
+                run.results["KTR CDF gamma CI"] = percentile_interval(sample[:, 1])
             else:
                 sample = RM.bootstrap(data, lambda subset, eve: RM.KTR_CDF_rate(subset, beta, event=eve, k_bounds=k_bounds, gamma_bounds=gamma_bounds, cores=args.cores, logTrick=args.logtrick, init_guess=init_guess, do_bopt=args.bayesopt, bias_shift=args.barrier), args.numboots, double=True, event=event, return_stat=True, seed=seed)
                 run.results["KTR CDF ln k"] = np.mean(np.log(sample[:, 0]))
@@ -374,7 +434,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
         ks_stat, p = ks_1samp(final_time_indices[event], lambda idx: RM.KTR_CDF(idx, np.exp(run.results["KTR CDF ln k"]), run.results["KTR CDF gamma"], vmb_average, cores=args.cores, logTrick=args.logtrick))
         run.results["KTR CDF KS stat"] = ks_stat
         run.results["KTR CDF p value"] = p
-        report_method_result(run, "KTR CDF", "KTR CDF ln k", ks_stat, p, args.bootstrap, boots_avail, gamma_key="KTR CDF gamma")
+        report_method_result(run, "KTR CDF", "KTR CDF ln k", ks_stat, p, args.bootstrap, bootstrap_ci, gamma_key="KTR CDF gamma")
 
     if args.eatrmle:
         if not args.bootstrap:
@@ -382,7 +442,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
             run.results["EATR MLE ln k"] = np.log(result[0])
             run.results["EATR MLE gamma"] = result[1]
         else:
-            if boots_avail:
+            if use_scipy_bootstrap:
                 indices = list(range(len(data)))
                 result = RM.EATR_MLE_rate(data, beta, event=event, gamma_bounds=gamma_bounds, cores=args.cores, logTrick=args.logtrick, do_bopt=args.bayesopt, bias_shift=args.barrier)
                 res = bootstr(
@@ -396,6 +456,12 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
                 run.results["EATR MLE gamma"] = result[1]
                 run.results["EATR MLE ln k CI"] = [np.log(res.confidence_interval.low[0]), np.log(res.confidence_interval.high[0])]
                 run.results["EATR MLE gamma CI"] = [res.confidence_interval.low[1], res.confidence_interval.high[1]]
+            elif use_threaded_bootstrap:
+                sample = threaded_bootstrap(data, lambda subset, eve: RM.EATR_MLE_rate(subset, beta, event=eve, gamma_bounds=gamma_bounds, cores=args.cores, logTrick=args.logtrick, do_bopt=args.bayesopt, bias_shift=args.barrier), args.numboots, event=event, double=True, seed=seed, threads=args.threads)
+                run.results["EATR MLE ln k"] = float(np.mean(np.log(sample[:, 0])))
+                run.results["EATR MLE gamma"] = float(np.mean(sample[:, 1]))
+                run.results["EATR MLE ln k CI"] = percentile_interval(np.log(sample[:, 0]))
+                run.results["EATR MLE gamma CI"] = percentile_interval(sample[:, 1])
             else:
                 sample = RM.bootstrap(data, lambda subset, eve: RM.EATR_MLE_rate(subset, beta, event=eve, gamma_bounds=gamma_bounds, cores=args.cores, logTrick=args.logtrick, do_bopt=args.bayesopt, bias_shift=args.barrier), args.numboots, double=True, event=event, return_stat=True, seed=seed)
                 run.results["EATR MLE ln k"] = np.mean(np.log(sample[:, 0]))
@@ -407,7 +473,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
         ks_stat, p = ks_1samp(final_time_indices[event], lambda idx: RM.EATR_CDF(idx, np.exp(run.results["EATR MLE ln k"]), log_average_exp, cores=args.cores, logTrick=args.logtrick))
         run.results["EATR MLE KS stat"] = ks_stat
         run.results["EATR MLE p value"] = p
-        report_method_result(run, "EATR MLE", "EATR MLE ln k", ks_stat, p, args.bootstrap, boots_avail, gamma_key="EATR MLE gamma")
+        report_method_result(run, "EATR MLE", "EATR MLE ln k", ks_stat, p, args.bootstrap, bootstrap_ci, gamma_key="EATR MLE gamma")
 
     if args.eatrcdf:
         if not args.bootstrap:
@@ -415,7 +481,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
             run.results["EATR CDF ln k"] = np.log(result[0])
             run.results["EATR CDF gamma"] = result[1]
         else:
-            if boots_avail:
+            if use_scipy_bootstrap:
                 indices = list(range(len(data)))
                 result = RM.EATR_CDF_rate(data, beta, event=event, k_bounds=k_bounds, gamma_bounds=gamma_bounds, cores=args.cores, init_guess=init_guess, logTrick=args.logtrick, do_bopt=args.bayesopt, bias_shift=args.barrier)
                 res = bootstr(
@@ -429,6 +495,12 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
                 run.results["EATR CDF gamma"] = result[1]
                 run.results["EATR CDF ln k CI"] = [np.log(res.confidence_interval.low[0]), np.log(res.confidence_interval.high[0])]
                 run.results["EATR CDF gamma CI"] = [res.confidence_interval.low[1], res.confidence_interval.high[1]]
+            elif use_threaded_bootstrap:
+                sample = threaded_bootstrap(data, lambda subset, eve: RM.EATR_CDF_rate(subset, beta, event=eve, k_bounds=k_bounds, gamma_bounds=gamma_bounds, cores=args.cores, init_guess=init_guess, logTrick=args.logtrick, do_bopt=args.bayesopt, bias_shift=args.barrier), args.numboots, event=event, double=True, seed=seed, threads=args.threads)
+                run.results["EATR CDF ln k"] = float(np.mean(np.log(sample[:, 0])))
+                run.results["EATR CDF gamma"] = float(np.mean(sample[:, 1]))
+                run.results["EATR CDF ln k CI"] = percentile_interval(np.log(sample[:, 0]))
+                run.results["EATR CDF gamma CI"] = percentile_interval(sample[:, 1])
             else:
                 sample = RM.bootstrap(data, lambda subset, eve: RM.EATR_CDF_rate(subset, beta, event=eve, k_bounds=k_bounds, gamma_bounds=gamma_bounds, cores=args.cores, init_guess=init_guess, logTrick=args.logtrick, do_bopt=args.bayesopt, bias_shift=args.barrier), args.numboots, double=True, event=event, return_stat=True, seed=seed)
                 run.results["EATR CDF ln k"] = np.mean(np.log(sample[:, 0]))
@@ -440,7 +512,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
         ks_stat, p = ks_1samp(final_time_indices[event], lambda idx: RM.EATR_CDF(idx, np.exp(run.results["EATR CDF ln k"]), log_average_exp, cores=args.cores, logTrick=args.logtrick))
         run.results["EATR CDF KS stat"] = ks_stat
         run.results["EATR CDF p value"] = p
-        report_method_result(run, "EATR CDF", "EATR CDF ln k", ks_stat, p, args.bootstrap, boots_avail, gamma_key="EATR CDF gamma")
+        report_method_result(run, "EATR CDF", "EATR CDF ln k", ks_stat, p, args.bootstrap, bootstrap_ci, gamma_key="EATR CDF gamma")
 
     return run
 
