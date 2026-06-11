@@ -92,6 +92,17 @@ done
   -q \
   -o "${OUT_DIR}/opes_flooding.json"
 
+# Alternatively, generate plots separately from an existing JSON (e.g. to
+# change labels or time units without rerunning the analysis):
+# "${PYTHON_BIN}" -m eatr_rates.plot_results flooding \
+#   -i "${OUT_DIR}/opes_flooding.json" \
+#   --condition-label "OPES barrier" \
+#   --condition-unit "kJ mol^-1" \
+#   --title-prefix "OPES flooding CLI" \
+#   --time-unit "${PLOT_TIME_UNIT}" \
+#   --truerate 0.35967608559103206 \
+#   -o "${OUT_DIR}/opes_cli"
+
 "${PYTHON_BIN}" -m eatr_rates.rates_eatr_opes \
   -i "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_wt/eruns_pace1e2"/run_*/metad.colvar --barrier 1 \
   -i "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_wt/eruns_pace1e3"/run_*/metad.colvar --barrier 10 \
@@ -125,3 +136,13 @@ done
   --truerate 0.35967608559103206 \
   -q \
   -o "${OUT_DIR}/wt_flooding.json"
+
+# Alternatively, generate plots separately from an existing JSON:
+# "${PYTHON_BIN}" -m eatr_rates.plot_results flooding \
+#   -i "${OUT_DIR}/wt_flooding.json" \
+#   --condition-label "MetaD pace" \
+#   --condition-unit "ps" \
+#   --title-prefix "WT flooding CLI" \
+#   --time-unit "${PLOT_TIME_UNIT}" \
+#   --truerate 0.35967608559103206 \
+#   -o "${OUT_DIR}/wt_cli"
