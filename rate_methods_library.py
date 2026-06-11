@@ -9,6 +9,7 @@ else:
 
 import sys
 from scipy import optimize
+from scipy.integrate import cumulative_trapezoid
 import warnings
 import multiprocessing as mp
 from functools import partial
@@ -53,6 +54,61 @@ def _map_with_cores(func, values, cores):
         with mp.Pool(cores) as pool:
             return np.array(pool.map(func, values))
     return np.array([func(value) for value in values])
+
+
+def _build_v_data(data, bias_shift=0.0):
+    """Build the padded (n_trajs × T_max) bias matrix and time axis once."""
+    colvar_maxrow_count = max(len(traj[:, 0]) for traj in data)
+    time_list = np.linspace(0, colvar_maxrow_count * (data[0][1, 0] - data[0][0, 0]), colvar_maxrow_count)
+    v_data = np.full((len(data), colvar_maxrow_count), np.nan)
+    for i, traj in enumerate(data):
+        v_data[i, :len(traj)] = traj[:, 1] + bias_shift
+    return v_data, np.isnan(v_data), time_list
+
+
+def _avg_exponential_from_v_data(v_data, mask, time_list, beta, gamma, logTrick=False):
+    """Compute log<e^{βγV}>(t) from a precomputed v_data matrix."""
+    if logTrick:
+        simmax_v = np.nanmax(v_data, axis=0)
+        masked_exp = np.ma.masked_array(np.exp(beta * gamma * (v_data - simmax_v)), mask)
+        log_vals = beta * gamma * simmax_v + np.log(np.ma.average(masked_exp.T, axis=1))
+    else:
+        masked_exp = np.ma.masked_array(np.exp(beta * gamma * v_data), mask)
+        log_vals = np.log(np.ma.average(masked_exp.T, axis=1))
+    return np.vstack((time_list, np.asarray(log_vals))).T
+
+
+def _cum_hazards_eatr(log_average_exp, final_time_indices, logTrick=False):
+    """Compute ∫₀ᵗⁱ <e^{γβV}>(t) dt for all indices in one vectorised pass.
+
+    Falls back to per-element EATR_calculate_cum_hazard only when logTrick=True.
+    """
+    if logTrick:
+        func = partial(EATR_calculate_cum_hazard, log_average_exp, True)
+        return np.array([func(i) for i in final_time_indices], dtype=float)
+    exp_vals = np.exp(np.asarray(log_average_exp[:, 1], dtype=float))
+    cum_vals = cumulative_trapezoid(exp_vals, log_average_exp[:, 0], initial=0.0)
+    indices = np.asarray(final_time_indices, dtype=int)
+    result = cum_vals[indices].copy()
+    result[indices <= 1] = 0.0
+    return result
+
+
+def _cum_hazards_ktr(vmb_average, gamma, final_time_indices, logTrick=False):
+    """Compute ∫₀ᵗⁱ e^{γβVmb}(t) dt for all indices in one vectorised pass.
+
+    Falls back to per-element KTR_calculate_cum_hazard only when logTrick=True.
+    """
+    if logTrick:
+        func = partial(KTR_calculate_cum_hazard, gamma, vmb_average, True)
+        return np.array([func(i) for i in final_time_indices], dtype=float)
+    exp_vals = np.exp(gamma * np.asarray(vmb_average[:, 1], dtype=float))
+    cum_vals = cumulative_trapezoid(exp_vals, vmb_average[:, 0], initial=0.0)
+    indices = np.asarray(final_time_indices, dtype=int)
+    result = cum_vals[indices].copy()
+    result[indices <= 1] = 0.0
+    return result
+
 
 # data fmt:
 # [
@@ -263,9 +319,7 @@ def KTR_calculate_neg_log_l(gamma, final_time_indices, vmb_average, event=None, 
     if event is None:
         event = _default_event(final_time_indices)
 
-    func = partial(KTR_calculate_cum_hazard, gamma, vmb_average, logTrick)
-    cum_hazard = _map_with_cores(func, final_time_indices, cores)
-
+    cum_hazard = _cum_hazards_ktr(vmb_average, gamma, final_time_indices, logTrick)
     log_hazard = KTR_calculate_log_hazard(gamma, vmb_average, final_time_indices)
 
     mean_t = cum_hazard.sum() / event.sum()
@@ -277,6 +331,8 @@ def KTR_calculate_neg_log_l(gamma, final_time_indices, vmb_average, event=None, 
 
 # integral of e^γβVmb from 0 to simulation i's transition time
 def KTR_calculate_cum_hazard(gamma, vmb_average, logTrick, final_time_index):
+    if int(final_time_index) <= 1:
+        return 0.0
     dt=vmb_average[1,0]-vmb_average[0,0]
     if logTrick: # log-sum-exp trick; e^A+Σe^Bi = exp(A + ln(1+Σe^(Bi-A))); int_0^ti f(t)dt ~ (dt/2)*( f(0) + f(ti) + 2Σ_j=1^(i-1)f(tj) )
         max_vmb = max(vmb_average[:,1])
@@ -291,8 +347,7 @@ def KTR_calculate_log_hazard(gamma, vmb_average, final_time_index):
 
 # Theory CDF for KTR: S(t) = exp(-int_0^t k(t') dt') = exp(-k0 int_0^t e^γβVmb(t') dt')
 def KTR_CDF(time_indices, k0, gamma, vmb_average, cores=1, logTrick=False):
-    func = partial(KTR_calculate_cum_hazard, gamma, vmb_average, logTrick)
-    cum_hazard = _map_with_cores(func, time_indices, cores)
+    cum_hazard = _cum_hazards_ktr(vmb_average, gamma, time_indices, logTrick)
     return 1 - np.exp(-k0 * cum_hazard)
 
 # KTR CDF Fit Least Squares Objective
@@ -331,10 +386,9 @@ def KTR_MLE_rate(data, beta, event=None, gamma_bounds=(0.,1.), cores=1, logTrick
         gamma = optimizer.max['params']['gamma']
 
     # Calculate k0* = M / ( Σ_N int_0^ti e^γβVmb(t') dt' )
-    func = partial(KTR_calculate_cum_hazard, gamma, vmb_average, logTrick)
-    cum_hazard = _map_with_cores(func, final_time_indices, cores)
+    cum_hazard = _cum_hazards_ktr(vmb_average, gamma, final_time_indices, logTrick)
     k0 = event.sum() / cum_hazard.sum()
-    
+
     return np.array([k0, gamma])
 
 # KTR Get MLE rate estimate (from precomputed Vmb(t) and ti indices)
@@ -363,10 +417,9 @@ def KTR_MLE_rate_VMB(vmb_average, final_time_indices, event=None, gamma_bounds=(
         gamma = optimizer.max['params']['gamma']
 
     # Calculate k0* = M / ( Σ_N int_0^ti e^γβVmb(t') dt' )
-    func = partial(KTR_calculate_cum_hazard, gamma, vmb_average, logTrick)
-    cum_hazard = _map_with_cores(func, final_time_indices, cores)
+    cum_hazard = _cum_hazards_ktr(vmb_average, gamma, final_time_indices, logTrick)
     k0 = event.sum() / cum_hazard.sum()
-    
+
     return np.array([k0, gamma])
 
 # KTR Get CDF rate estimate (directly from trajectory data)
@@ -450,26 +503,9 @@ def KTR_CDF_rate_VMB(vmb_average, final_time_indices, event=None, k_bounds=(-np.
 
 # Evaluating the average exponential <e^γβV> = 1/n(t) Σ_n(t) e^γβV(t) (where n(t) is the number of untransitioned simulations at t)
 def avg_exponential(data, beta, gamma, logTrick=False, bias_shift=0.0):
-
-    # Prepare rectangular masked ndarray for averaging
-    colvar_maxrow_count = max(len(traj[:,0]) for traj in data)
-    time_list = np.linspace(0,colvar_maxrow_count*(data[0][1,0]-data[0][0,0]),colvar_maxrow_count)
-    v_data = np.full((len(data), colvar_maxrow_count), np.nan)
-    for i, traj in enumerate(data):
-            v_data[i,:len(traj)] = traj[:,1]+bias_shift
-
-    if logTrick:
-        simmax_v = np.nanmax(v_data, axis=0)
-        masked_exp = np.ma.masked_array(np.exp(beta * gamma * (v_data - simmax_v)), np.isnan(v_data))
-        log_average_exp = np.ma.average(masked_exp.T, axis=1)
-        log_average_exp = beta*gamma*simmax_v + np.log(log_average_exp)
-        log_average_exp = np.vstack((time_list, log_average_exp)).T
-        return log_average_exp
-    else:
-        masked_exp = np.ma.masked_array(np.exp(beta * gamma * v_data), np.isnan(v_data))
-        log_average_exp = np.log(np.ma.average(masked_exp.T, axis=1))
-        log_average_exp = np.vstack((time_list, log_average_exp)).T
-        return log_average_exp # Final result is of the form [ [t0 ln<e^γβV>0], [t1 ln<e^γβV>1], ... ]
+    v_data, mask, time_list = _build_v_data(data, bias_shift)
+    return _avg_exponential_from_v_data(v_data, mask, time_list, beta, gamma, logTrick)
+    # Final result is of the form [ [t0 ln<e^γβV>0], [t1 ln<e^γβV>1], ... ]
 
 #  EATR log likelihood expression as a function of γ alone (dependence on γ comes from log_average_exp)
 def EATR_calculate_neg_log_l(gamma, final_time_indices, log_average_exp, event=None, cores=1, logTrick=False, reg_lambda=0.0):
@@ -477,9 +513,7 @@ def EATR_calculate_neg_log_l(gamma, final_time_indices, log_average_exp, event=N
     if event is None:
         event = _default_event(final_time_indices)
 
-    func = partial(EATR_calculate_cum_hazard, log_average_exp, logTrick)
-    cum_hazard = _map_with_cores(func, final_time_indices, cores)
-
+    cum_hazard = _cum_hazards_eatr(log_average_exp, final_time_indices, logTrick)
     log_hazard = EATR_calculate_log_hazard(final_time_indices, log_average_exp)
 
     mean_t = cum_hazard.sum() / event.sum()
@@ -495,9 +529,7 @@ def EATR_calculate_neg_log_l_k0(k0, gamma, final_time_indices, log_average_exp, 
     if event is None:
         event = _default_event(final_time_indices)
 
-    func = partial(EATR_calculate_cum_hazard, log_average_exp, logTrick)
-    cum_hazard = _map_with_cores(func, final_time_indices, cores)
-
+    cum_hazard = _cum_hazards_eatr(log_average_exp, final_time_indices, logTrick)
     log_hazard = EATR_calculate_log_hazard(final_time_indices, log_average_exp)
 
     log_l = event.sum() * np.log(k0) + log_hazard[event].sum() - k0 * cum_hazard.sum()
@@ -508,6 +540,8 @@ def EATR_calculate_neg_log_l_k0(k0, gamma, final_time_indices, log_average_exp, 
 
 # Integral of <e^γβV> from 0 to ti where i is the given time index
 def EATR_calculate_cum_hazard(log_average_exp, logTrick, final_time_index):
+    if int(final_time_index) <= 1:
+        return 0.0
     if logTrick:
         dt=log_average_exp[1,0]-log_average_exp[0,0]
         max_lae = max(log_average_exp[:,1])
@@ -524,9 +558,7 @@ def EATR_calculate_log_hazard(final_time_index, log_average_exp):
 
 # Theory CDF for EATR: S(t) = exp(-int_0^t k(t') dt') = exp(-k0 int_0^t <e^γβV>(t') dt')
 def EATR_CDF(time_indices, k0, log_average_exp, cores=1, logTrick=False):
-
-    func = partial(EATR_calculate_cum_hazard, log_average_exp, logTrick)
-    cum_hazard = _map_with_cores(func, time_indices, cores)
+    cum_hazard = _cum_hazards_eatr(log_average_exp, time_indices, logTrick)
     return 1 - np.exp(-k0 * cum_hazard)
     
 # EATR CDF Fit Least Squares Objective
@@ -545,10 +577,12 @@ def EATR_MLE_rate(data, beta, event=None, gamma_bounds=(0.,1.), cores=1, logTric
     if event is None:
         event = _default_event(final_time_indices)
 
-    # Helper function to get ln<e^γβV> for a given γ, then the -log L for γ.
+    # Precompute bias matrix once; only the gamma scalar changes between optimizer steps.
+    v_data, v_mask, time_list = _build_v_data(data, bias_shift)
+
     def neg_log_l(gamma):
-        log_average_exp = avg_exponential(data, beta, gamma, logTrick=logTrick, bias_shift=bias_shift)
-        return EATR_calculate_neg_log_l(gamma, final_time_indices, log_average_exp, event=event, cores=cores, logTrick=logTrick, reg_lambda=reg_lambda)
+        log_average_exp = _avg_exponential_from_v_data(v_data, v_mask, time_list, beta, gamma, logTrick)
+        return EATR_calculate_neg_log_l(gamma, final_time_indices, log_average_exp, event=event, logTrick=logTrick, reg_lambda=reg_lambda)
 
     # Find MLE for γ with Brent method or Bayesian Optimization
     if not do_bopt:
@@ -567,9 +601,8 @@ def EATR_MLE_rate(data, beta, event=None, gamma_bounds=(0.,1.), cores=1, logTric
         gamma = optimizer.max['params']['gamma']
 
     # Calculate k0*
-    log_average_exp = avg_exponential(data, beta, gamma, logTrick=logTrick, bias_shift=bias_shift)
-    func = partial(EATR_calculate_cum_hazard, log_average_exp, logTrick)
-    cum_hazard = _map_with_cores(func, final_time_indices, cores)
+    log_average_exp = _avg_exponential_from_v_data(v_data, v_mask, time_list, beta, gamma, logTrick)
+    cum_hazard = _cum_hazards_eatr(log_average_exp, final_time_indices, logTrick)
     k0 = event.sum() / cum_hazard.sum()
 
     return np.array([k0, gamma])
@@ -582,21 +615,41 @@ def EATR_CDF_rate(data, beta, event=None, k_bounds=(0.,np.inf), gamma_bounds=(0.
     if event is None:
         event = _default_event(final_time_indices)
 
-    # initial guess should be similar to the iMetaD rate if not specified
-    if init_guess[0] is None:
-        init_guess = (iMetaD_invMRT(data, beta, event=event, bias_shift=bias_shift),0.9)
-
     # 2-parameter CDF fitting for gamma and k0
     ecdfx_indices = np.sort(final_time_indices)
     ecdfy = np.arange(1, event.sum()+1) / len(data)
     
-    # Helper functions to calculate ln<e^βγV>
+    # Precompute bias matrix once; only gamma changes between optimizer steps.
+    v_data, v_mask, time_list = _build_v_data(data, bias_shift)
+
     def cdf(time_indices, k0, gamma):
-        log_average_exp = avg_exponential(data, beta, gamma, logTrick=logTrick, bias_shift=bias_shift)
-        return EATR_CDF(time_indices, k0, log_average_exp, cores=cores, logTrick=logTrick)
+        log_average_exp = _avg_exponential_from_v_data(v_data, v_mask, time_list, beta, gamma, logTrick)
+        return EATR_CDF(time_indices, k0, log_average_exp, logTrick=logTrick)
     def get_cost(params):
-        log_average_exp = avg_exponential(data, beta, params[1], logTrick=logTrick, bias_shift=bias_shift)
-        return EATR_leastsq_cost(params, ecdfx_indices, ecdfy, log_average_exp, cores=cores, logTrick=logTrick, reg_lambda=reg_lambda, kIMD=kIMD)
+        log_average_exp = _avg_exponential_from_v_data(v_data, v_mask, time_list, beta, params[1], logTrick)
+        return EATR_leastsq_cost(params, ecdfx_indices, ecdfy, log_average_exp, logTrick=logTrick, reg_lambda=reg_lambda, kIMD=kIMD)
+
+    def guess_is_finite(params):
+        try:
+            values = cdf(ecdfx_indices, params[0], params[1])
+        except Exception:
+            return False
+        return np.isfinite(values).all()
+
+    # initial guess should be finite for the CDF model on the actual dataset
+    if init_guess[0] is None:
+        imetad_guess = iMetaD_invMRT(data, beta, event=event, bias_shift=bias_shift)
+        guess_candidates = []
+        try:
+            mle_guess = EATR_MLE_rate(data, beta, event=event, gamma_bounds=gamma_bounds, cores=cores, logTrick=logTrick, reg_lambda=reg_lambda, do_bopt=do_bopt, bias_shift=bias_shift)
+            guess_candidates.append((mle_guess[0], mle_guess[1]))
+        except Exception:
+            pass
+        guess_candidates.extend((imetad_guess, gamma) for gamma in (0.5, 0.3, 0.1, 0.7, 0.9))
+        init_guess = next((candidate for candidate in guess_candidates if guess_is_finite(candidate)), (imetad_guess, 0.5))
+    elif not guess_is_finite(init_guess):
+        fallback_candidates = [(init_guess[0], gamma) for gamma in (0.5, 0.3, 0.1, 0.7, 0.9)]
+        init_guess = next((candidate for candidate in fallback_candidates if guess_is_finite(candidate)), init_guess)
 
     if not do_bopt: # No Bayesian Optimization method: instead use Bounded Brent (if λ > 0) or Levenberg-Marquardt (if λ = 0) method
         options = {
