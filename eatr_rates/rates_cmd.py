@@ -314,7 +314,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
     random.seed(seed)
     seed = seed if seed is None else seed + 1
 
-    data = RM.get_data(args.input, args.tcol, args.vcol, acc_col=args.acol, maxbias_col=args.mcol, time_scale_factor=args.timeunit)
+    data = RM.get_data(args.input, args.tcol, args.vcol, acc_col=args.acol, maxbias_col=args.mcol, time_scale_factor=args.timeunit, threads=args.threads)
     event = RM.get_event(data, maxlen=args.maxlen, maxtime=args.maxtime, num_events=args.numevents, log_files=args.logfiles, quiet=args.quiet)
     run.data = data
     run.event = event

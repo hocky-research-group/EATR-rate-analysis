@@ -117,11 +117,11 @@ def _cum_hazards_ktr(vmb_average, gamma, final_time_indices, logTrick=False):
 # [t2 V2 acc2 Vm2],
 # ...
 # ]
-def get_data(colvars,time_col,bias_col,acc_col=None,maxbias_col=None,time_scale_factor=1.0): # Changed "file_format" to "colvars"
+def get_data(colvars, time_col, bias_col, acc_col=None, maxbias_col=None, time_scale_factor=1.0, threads=1):  # Changed "file_format" to "colvars"
     if len(colvars) == 0:
         sys.exit(f"ERROR: No COLVAR files provided.")
-    data = []
-    for colvar in colvars:
+
+    def _load_one(colvar):
         if acc_col is None and maxbias_col is None:
             traj = _loadtxt_with_optional_header(colvar, (time_col, bias_col))
             traj = _pad_trajectory_columns(traj, 2)
@@ -134,8 +134,15 @@ def get_data(colvars,time_col,bias_col,acc_col=None,maxbias_col=None,time_scale_
             traj = _loadtxt_with_optional_header(colvar, [time_col, bias_col, maxbias_col])
             dummy = np.array([None for _ in traj])
             traj = np.vstack([traj[:,:-1].T, dummy, traj[:,-1].T]).T
-        traj[:,0] *= time_scale_factor
-        data.append(traj)
+        traj[:, 0] *= time_scale_factor
+        return traj
+
+    if threads > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=threads) as executor:
+            data = list(executor.map(_load_one, colvars))
+    else:
+        data = [_load_one(colvar) for colvar in colvars]
     return data
 
 def get_event(data, maxlen=None, maxtime=None, num_events=None, log_files=None, quiet=False, qquiet=False):

@@ -201,8 +201,13 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
     gamma_bounds = (args.gammamin, args.gammamax)
     axis_first = 1 if args.timefirst else 0
 
-    datas = [RM.get_data(colvars, args.tcol, args.vcol, acc_col=args.acol, time_scale_factor=args.timeunit) for colvars in args.input]
-    events = [RM.get_event(datas[i], maxlen=args.maxlen, maxtime=args.maxtime, num_events=num_eventss[i], log_files=log_filess[i], quiet=True) for i in range(len(datas))]
+    datas = []
+    events = []
+    for i, colvars in enumerate(args.input):
+        data = RM.get_data(colvars, args.tcol, args.vcol, acc_col=args.acol, time_scale_factor=args.timeunit, threads=args.threads)
+        event = RM.get_event(data, maxlen=args.maxlen, maxtime=args.maxtime, num_events=num_eventss[i], log_files=log_filess[i], quiet=True)
+        datas.append(data)
+        events.append(event)
 
     def compute_diagnostics(beta_v_datas: dict[float, np.ndarray], obs_rates: dict[float, float]) -> dict[str, object]:
         gamma_grid = np.linspace(args.gammamin, args.gammamax, 401)
