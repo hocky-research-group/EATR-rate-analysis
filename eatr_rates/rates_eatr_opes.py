@@ -238,7 +238,7 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
             "ln_k0_per_set_best": per_set_logk0[best_index],
         }
 
-    def analyze_indices(indicess: list[list[int]], nsets: int | None = None) -> tuple[float, float, float | None, list[FloodingSetReport], dict[str, object]]:
+    def analyze_indices(indicess: list[list[int]], nsets: int | None = None, threads: int = 1) -> tuple[float, float, float | None, list[FloodingSetReport], dict[str, object]]:
         logk0_opesf = None
         opesf_times: list[float] = []
         opesf_event: list[bool] = []
@@ -292,7 +292,7 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
             )
             return barrier, v_data, float(obs_rate), report, opesf_times_local, opesf_event_local
 
-        set_results = thread_map(analyze_set, list(enumerate(barriers)), args.threads)
+        set_results = thread_map(analyze_set, list(enumerate(barriers)), threads)
         for barrier, v_data, obs_rate, report, opesf_times_local, opesf_event_local in set_results:
             v_datas[barrier] = v_data
             obs_rates[barrier] = obs_rate
@@ -371,7 +371,7 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
         return logk0_best, gamma_best, logk0_opesf, set_reports, diagnostics
 
     if not args.bootstrap:
-        logk0_best, gamma_best, logk0_opes, set_reports, diagnostics = analyze_indices([list(range(len(data))) for data in datas], args.nsets)
+        logk0_best, gamma_best, logk0_opes, set_reports, diagnostics = analyze_indices([list(range(len(data))) for data in datas], args.nsets, threads=args.threads)
         result = FloodingAnalysisResult(beta=beta, logk0=float(logk0_best), gamma=float(gamma_best), opes_logk0=None if logk0_opes is None else float(logk0_opes), set_reports=set_reports, flooding_diagnostics=diagnostics)
         result.messages = format_flooding_result(result)
         return result
@@ -387,7 +387,7 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
     def bootstrap_worker(i: int):
         rng = random.Random(None if args.seed is None else args.seed + i + 1)
         indicess = [rng.choices(list(range(len(data))), k=len(data)) for data in datas]
-        return i, analyze_indices(indicess, args.nsets)
+        return i, analyze_indices(indicess, args.nsets, threads=1)
 
     bootstrap_results = thread_map(bootstrap_worker, list(range(args.numboots)), args.threads)
     for i, (logk0, gamma, logk0_opesf, current_reports, current_diagnostics) in bootstrap_results:
