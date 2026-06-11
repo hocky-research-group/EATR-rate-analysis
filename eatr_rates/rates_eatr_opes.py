@@ -49,6 +49,8 @@ class FloodingAnalysisResult:
     bootstrap_logk0_std: float | None = None
     bootstrap_gamma_std: float | None = None
     bootstrap_opes_logk0_std: float | None = None
+    bootstrap_per_set_log_k_obs_std: list[float] | None = None
+    bootstrap_per_set_ln_exp_beta_v_std: list[float] | None = None
     bootstrap_iterations: list[int] = field(default_factory=list)
     messages: list[str] = field(default_factory=list)
 
@@ -139,6 +141,8 @@ def result_payload(result: FloodingAnalysisResult, plot_time_unit: str) -> dict[
         "bootstrap_logk0_std": result.bootstrap_logk0_std,
         "bootstrap_gamma_std": result.bootstrap_gamma_std,
         "bootstrap_opes_logk0_std": result.bootstrap_opes_logk0_std,
+        "bootstrap_per_set_log_k_obs_std": result.bootstrap_per_set_log_k_obs_std,
+        "bootstrap_per_set_ln_exp_beta_v_std": result.bootstrap_per_set_ln_exp_beta_v_std,
         "bootstrap_iterations": result.bootstrap_iterations,
         "set_reports": [
             {
@@ -198,20 +202,29 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
     datas = [RM.get_data(colvars, args.tcol, args.vcol, acc_col=args.acol, time_scale_factor=args.timeunit) for colvars in args.input]
     events = [RM.get_event(datas[i], maxlen=args.maxlen, maxtime=args.maxtime, num_events=num_eventss[i], log_files=log_filess[i], quiet=True) for i in range(len(datas))]
 
-    def compute_diagnostics(v_datas: dict[float, np.ndarray], obs_rates: dict[float, float]) -> dict[str, object]:
+    def compute_diagnostics(beta_v_datas: dict[float, np.ndarray], obs_rates: dict[float, float]) -> dict[str, object]:
         gamma_grid = np.linspace(args.gammamin, args.gammamax, 401)
+        dgamma = float(gamma_grid[1] - gamma_grid[0]) if len(gamma_grid) > 1 else 0.0
+        # Multiplicative step trick: compute exp(g0 * bv) once, then multiply by
+        # exp(dgamma * bv) each step — replaces 401 exp(N×T) calls with 2 + 399 multiplies.
+        exp_datas = {barrier: np.exp(gamma_grid[0] * beta_v_datas[barrier]) for barrier in barriers}
+        step_factors = {barrier: np.exp(dgamma * beta_v_datas[barrier]) for barrier in barriers}
 
-        def gamma_worker(gamma: float) -> tuple[list[float], float, float]:
+        per_set_logk0: list[list[float]] = []
+        mean_logk0: list[float] = []
+        var_logk0: list[float] = []
+        for k in range(len(gamma_grid)):
+            if k > 0:
+                for barrier in barriers:
+                    exp_datas[barrier] *= step_factors[barrier]
             logk0s = []
             for barrier in barriers:
-                avg = np.mean(np.nanmean(np.exp(beta * gamma * v_datas[barrier]), axis=axis_first))
+                avg = np.mean(np.nanmean(exp_datas[barrier], axis=axis_first))
                 logk0s.append(float(np.log(obs_rates[barrier]) - np.log(avg)))
-            return logk0s, float(np.mean(logk0s)), float(np.var(logk0s))
+            per_set_logk0.append(logk0s)
+            mean_logk0.append(float(np.mean(logk0s)))
+            var_logk0.append(float(np.var(logk0s)))
 
-        gamma_results = thread_map(gamma_worker, gamma_grid, args.threads)
-        per_set_logk0 = [result[0] for result in gamma_results]
-        mean_logk0 = [result[1] for result in gamma_results]
-        var_logk0 = [result[2] for result in gamma_results]
         best_index = int(np.argmin(var_logk0))
         return {
             "gamma_grid": gamma_grid.tolist(),
@@ -289,18 +302,20 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
         if args.opesf:
             logk0_opesf = np.log(RM.iMetaD_FitCDF_times(np.array(opesf_times), event=np.array(opesf_event)))
 
+        beta_v_datas = {barrier: beta * v_data for barrier, v_data in v_datas.items()}
+
         def variance(gamma: float) -> float:
             logk0s = []
             for barrier in barriers:
-                avg = np.mean(np.nanmean(np.exp(beta * gamma * v_datas[barrier]), axis=axis_first))
+                avg = np.mean(np.nanmean(np.exp(gamma * beta_v_datas[barrier]), axis=axis_first))
                 logk0s.append(np.log(obs_rates[barrier]) - np.log(avg))
             return np.var(logk0s)
 
-        diagnostics = compute_diagnostics(v_datas, obs_rates)
+        diagnostics = compute_diagnostics(beta_v_datas, obs_rates)
         gamma_best = optimize.minimize_scalar(variance, bounds=gamma_bounds, method="bounded").x
         logk0s = []
         for barrier in barriers:
-            avg = np.mean(np.nanmean(np.exp(beta * gamma_best * v_datas[barrier]), axis=axis_first))
+            avg = np.mean(np.nanmean(np.exp(gamma_best * beta_v_datas[barrier]), axis=axis_first))
             logk0s.append(np.log(obs_rates[barrier]) - np.log(avg))
         logk0_best = np.mean(logk0s)
         diagnostics["gamma_best"] = float(gamma_best)
@@ -317,6 +332,8 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
     sample_logk0 = []
     sample_gamma = []
     sample_opesf = []
+    sample_set_log_k_obs: list[list[float]] = [[] for _ in barriers]
+    sample_set_ln_exp_beta_v: list[list[float]] = [[] for _ in barriers]
     set_reports: list[FloodingSetReport] = []
     diagnostics: dict[str, object] | None = None
     iterations: list[int] = []
@@ -333,6 +350,9 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
         set_reports = current_reports
         diagnostics = current_diagnostics
         iterations.append(i)
+        for j, report in enumerate(current_reports):
+            sample_set_log_k_obs[j].append(report.log_k_obs)
+            sample_set_ln_exp_beta_v[j].append(report.ln_exp_beta_v)
     result = FloodingAnalysisResult(
         beta=beta,
         logk0=float(np.mean(sample_logk0)),
@@ -343,6 +363,8 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
         bootstrap_logk0_std=float(np.std(sample_logk0)),
         bootstrap_gamma_std=float(np.std(sample_gamma)),
         bootstrap_opes_logk0_std=None if sample_opesf[0] is None else float(np.std(sample_opesf)),
+        bootstrap_per_set_log_k_obs_std=[float(np.std(s)) for s in sample_set_log_k_obs],
+        bootstrap_per_set_ln_exp_beta_v_std=[float(np.std(s)) for s in sample_set_ln_exp_beta_v],
         bootstrap_iterations=iterations,
     )
     result.messages = format_flooding_result(result)

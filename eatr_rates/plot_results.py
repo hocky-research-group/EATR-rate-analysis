@@ -164,6 +164,20 @@ def plot_flooding_payload(
     logk0 = float(payload["logk0"])
     display_logk0 = float(logk0 + np.log(seconds_per_unit))
 
+    # Bootstrap per-set error bars (stds are unit-invariant for log rates)
+    log_kobs_std = (
+        np.array(payload["bootstrap_per_set_log_k_obs_std"], dtype=float)
+        if payload.get("bootstrap_per_set_log_k_obs_std") is not None
+        else None
+    )
+    ln_accel_std = (
+        np.array(payload["bootstrap_per_set_ln_exp_beta_v_std"], dtype=float)
+        if payload.get("bootstrap_per_set_ln_exp_beta_v_std") is not None
+        else None
+    )
+    bootstrap_logk0_std = payload.get("bootstrap_logk0_std")
+    bootstrap_gamma_std = payload.get("bootstrap_gamma_std")
+
     prefix = Path(output_prefix)
     prefix.parent.mkdir(parents=True, exist_ok=True)
     written_paths: list[str] = []
@@ -171,7 +185,10 @@ def plot_flooding_payload(
 
     observed_path = f"{prefix}_observed_rate.png"
     fig, ax = plt.subplots(figsize=(3.35, 2.23), constrained_layout=True)
-    ax.plot(condition_values, log_kobs, marker="o", color=BLUE)
+    if log_kobs_std is not None:
+        ax.errorbar(condition_values, log_kobs, yerr=log_kobs_std, marker="o", color=BLUE, capsize=3, linestyle="-")
+    else:
+        ax.plot(condition_values, log_kobs, marker="o", color=BLUE)
     for report, xval, yval in zip(reports, condition_values, log_kobs):
         ax.annotate(str(report["barrier"]), (xval, yval), textcoords="offset points", xytext=(4, 4), fontsize=8, color=GRAY)
     ax.set_xlabel(f"{condition_label}{unit_suffix}")
@@ -185,8 +202,18 @@ def plot_flooding_payload(
     xfit = np.linspace(float(np.min(ln_acceleration)) * 0.98, float(np.max(ln_acceleration)) * 1.02, 200)
     yfit = display_logk0 + gamma * xfit
     fig, ax = plt.subplots(figsize=(3.35, 2.23), constrained_layout=True)
-    ax.plot(ln_acceleration, log_kobs, marker="o", linestyle="none", label="Simulation sets", color=BLUE)
+    if log_kobs_std is not None or ln_accel_std is not None:
+        ax.errorbar(
+            ln_acceleration, log_kobs,
+            xerr=ln_accel_std, yerr=log_kobs_std,
+            marker="o", linestyle="none", label="Simulation sets", color=BLUE, capsize=3,
+        )
+    else:
+        ax.plot(ln_acceleration, log_kobs, marker="o", linestyle="none", label="Simulation sets", color=BLUE)
     ax.plot(xfit, yfit, color=BLACK, label=fr"fit: ln($k_{{obs}}$) = ln($k_0$) + $\gamma$ ln($\alpha$)")
+    if bootstrap_logk0_std is not None and bootstrap_gamma_std is not None:
+        yfit_std = np.sqrt(float(bootstrap_logk0_std) ** 2 + (float(bootstrap_gamma_std) * xfit) ** 2)
+        ax.fill_between(xfit, yfit - yfit_std, yfit + yfit_std, color=BLACK, alpha=0.15)
     for report, xval, yval in zip(reports, ln_acceleration, log_kobs):
         ax.annotate(str(report["barrier"]), (xval, yval), textcoords="offset points", xytext=(4, 4), fontsize=8, color=GRAY)
     ax.text(
