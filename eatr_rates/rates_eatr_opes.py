@@ -95,6 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--title-prefix", type=str, default="Flooding analysis", help="title prefix for the generated diagnostic figure")
     parser.add_argument("--plot-time-unit", choices=TIME_UNIT_CHOICES, default="seconds", help="display time unit for generated plots and JSON metadata (DEFAULT: seconds)")
     parser.add_argument("--truerate", type=float, default=None, help="reference ln(k0) value in the display time unit; drawn as a dashed line on the acceleration and diagnostics plots")
+    parser.add_argument("--nsets", type=int, default=None, help="number of simulation sets to use for the final fit, ordered from lowest to highest acceleration factor (default: use all sets)")
     return parser
 
 
@@ -237,7 +238,7 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
             "ln_k0_per_set_best": per_set_logk0[best_index],
         }
 
-    def analyze_indices(indicess: list[list[int]]) -> tuple[float, float, float | None, list[FloodingSetReport], dict[str, object]]:
+    def analyze_indices(indicess: list[list[int]], nsets: int | None = None) -> tuple[float, float, float | None, list[FloodingSetReport], dict[str, object]]:
         logk0_opesf = None
         opesf_times: list[float] = []
         opesf_event: list[bool] = []
@@ -305,9 +306,47 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
 
         beta_v_datas = {barrier: beta * v_data for barrier, v_data in v_datas.items()}
 
+        # Sort barriers by ascending ln_acceleration so convergence analysis runs
+        # from least- to most-biased sets.
+        ln_accels = [
+            float(np.log(np.mean(np.nanmean(np.exp(beta_v_datas[b]), axis=axis_first))))
+            for b in barriers
+        ]
+        sort_order = list(np.argsort(ln_accels))
+        sorted_barriers = [barriers[i] for i in sort_order]
+
+        # Convergence analysis: fit using the n lowest-alpha subsets (n = 3 … N).
+        n_total = len(sorted_barriers)
+        min_n_conv = min(3, n_total)
+        conv_n: list[int] = []
+        conv_gamma: list[float] = []
+        conv_logk0: list[float] = []
+        for n in range(min_n_conv, n_total + 1):
+            subset = sorted_barriers[:n]
+
+            def var_subset(gamma: float, sb: list = subset) -> float:
+                lk = [
+                    np.log(obs_rates[b]) - np.log(np.mean(np.nanmean(np.exp(gamma * beta_v_datas[b]), axis=axis_first)))
+                    for b in sb
+                ]
+                return float(np.var(lk)) if len(lk) > 1 else 0.0
+
+            gn = float(optimize.minimize_scalar(var_subset, bounds=gamma_bounds, method="bounded").x)
+            lk0s_n = [
+                np.log(obs_rates[b]) - np.log(np.mean(np.nanmean(np.exp(gn * beta_v_datas[b]), axis=axis_first)))
+                for b in subset
+            ]
+            conv_n.append(n)
+            conv_gamma.append(gn)
+            conv_logk0.append(float(np.mean(lk0s_n)))
+
+        # Determine which barriers to use for the final reported fit.
+        selected_nsets = nsets if (nsets is not None and 1 <= nsets < n_total) else n_total
+        fit_barriers = sorted_barriers[:selected_nsets]
+
         def variance(gamma: float) -> float:
             logk0s = []
-            for barrier in barriers:
+            for barrier in fit_barriers:
                 avg = np.mean(np.nanmean(np.exp(gamma * beta_v_datas[barrier]), axis=axis_first))
                 logk0s.append(np.log(obs_rates[barrier]) - np.log(avg))
             return np.var(logk0s)
@@ -315,17 +354,24 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
         diagnostics = compute_diagnostics(beta_v_datas, obs_rates)
         gamma_best = optimize.minimize_scalar(variance, bounds=gamma_bounds, method="bounded").x
         logk0s = []
-        for barrier in barriers:
+        for barrier in fit_barriers:
             avg = np.mean(np.nanmean(np.exp(gamma_best * beta_v_datas[barrier]), axis=axis_first))
             logk0s.append(np.log(obs_rates[barrier]) - np.log(avg))
         logk0_best = np.mean(logk0s)
         diagnostics["gamma_best"] = float(gamma_best)
         diagnostics["logk0_best"] = float(logk0_best)
         diagnostics["ln_k0_per_set_best"] = [float(value) for value in logk0s]
+        diagnostics["convergence_analysis"] = {
+            "n_sets": conv_n,
+            "gamma": conv_gamma,
+            "logk0": conv_logk0,
+            "sorted_barrier_labels": [float(sorted_barriers[i]) for i in range(n_total)],
+            "selected_nsets": selected_nsets,
+        }
         return logk0_best, gamma_best, logk0_opesf, set_reports, diagnostics
 
     if not args.bootstrap:
-        logk0_best, gamma_best, logk0_opes, set_reports, diagnostics = analyze_indices([list(range(len(data))) for data in datas])
+        logk0_best, gamma_best, logk0_opes, set_reports, diagnostics = analyze_indices([list(range(len(data))) for data in datas], args.nsets)
         result = FloodingAnalysisResult(beta=beta, logk0=float(logk0_best), gamma=float(gamma_best), opes_logk0=None if logk0_opes is None else float(logk0_opes), set_reports=set_reports, flooding_diagnostics=diagnostics)
         result.messages = format_flooding_result(result)
         return result
@@ -341,7 +387,7 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
     def bootstrap_worker(i: int):
         rng = random.Random(None if args.seed is None else args.seed + i + 1)
         indicess = [rng.choices(list(range(len(data))), k=len(data)) for data in datas]
-        return i, analyze_indices(indicess)
+        return i, analyze_indices(indicess, args.nsets)
 
     bootstrap_results = thread_map(bootstrap_worker, list(range(args.numboots)), args.threads)
     for i, (logk0, gamma, logk0_opesf, current_reports, current_diagnostics) in bootstrap_results:

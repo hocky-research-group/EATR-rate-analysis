@@ -294,6 +294,49 @@ def plot_flooding_payload(
         plt.close(fig)
         written_paths.append(diagnostics_path)
 
+    if diagnostics:
+        conv = diagnostics.get("convergence_analysis")
+        if conv:
+            convergence_path = f"{prefix}_convergence.png"
+            n_sets_arr = np.array(conv["n_sets"], dtype=int)
+            gamma_conv = np.array(conv["gamma"], dtype=float)
+            logk0_conv = np.array(conv["logk0"], dtype=float) + np.log(seconds_per_unit)
+            sorted_labels = conv["sorted_barrier_labels"]
+            selected_n = int(conv.get("selected_nsets", n_sets_arr[-1]))
+
+            fig, axes = plt.subplots(2, 1, figsize=(3.35, 4.5), sharex=True, gridspec_kw={"hspace": 0.04})
+
+            axes[0].plot(n_sets_arr, gamma_conv, marker="o", color=BLUE)
+            axes[0].axvline(selected_n, color=BLACK, linestyle="--",
+                            label=f"selected $n$ = {selected_n}")
+            axes[0].set_ylim(-0.05, 1.05)
+            axes[0].axhline(0.0, linestyle="--", color=BLACK, linewidth=0.6, alpha=0.4)
+            axes[0].axhline(1.0, linestyle="--", color=BLACK, linewidth=0.6, alpha=0.4)
+            axes[0].set_ylabel("Estimated γ")
+            axes[0].legend(loc="best", handlelength=1.5)
+
+            axes[1].plot(n_sets_arr, logk0_conv, marker="o", color=BLUE)
+            axes[1].axvline(selected_n, color=BLACK, linestyle="--")
+            if truerate is not None:
+                axes[1].axhline(truerate, linestyle=":", color=BLACK,
+                                label=fr"reference ln($k_0$) = {truerate:.3f}")
+                axes[1].legend(loc="best", handlelength=1.5)
+            axes[1].set_ylabel(rate_axis_label("Estimated", unit_abbrev))
+            axes[1].set_xlabel("Number of sets included (lowest α first)")
+
+            # x-tick labels: n plus the outermost barrier value at that n
+            tick_labels = [f"{n}\n({sorted_labels[n - 1]:.4g})" for n in n_sets_arr]
+            axes[1].set_xticks(n_sets_arr)
+            axes[1].set_xticklabels(tick_labels, fontsize=7)
+
+            style_axes(axes)
+            add_panel_labels(axes)
+            axes[0].tick_params(labelbottom=False)
+            fig.subplots_adjust(top=0.96, bottom=0.13, left=0.22, right=0.98, hspace=0.04)
+            fig.savefig(convergence_path, dpi=220)
+            plt.close(fig)
+            written_paths.append(convergence_path)
+
     return written_paths
 
 
