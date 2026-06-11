@@ -117,7 +117,7 @@ def _cum_hazards_ktr(vmb_average, gamma, final_time_indices, logTrick=False):
 # [t2 V2 acc2 Vm2],
 # ...
 # ]
-def get_data(colvars, time_col, bias_col, acc_col=None, maxbias_col=None, time_scale_factor=1.0, threads=1):  # Changed "file_format" to "colvars"
+def get_data(colvars, time_col, bias_col, acc_col=None, maxbias_col=None, time_scale_factor=1.0, threads=1, work_col=None):  # Changed "file_format" to "colvars"
     if len(colvars) == 0:
         sys.exit(f"ERROR: No COLVAR files provided.")
 
@@ -135,6 +135,9 @@ def get_data(colvars, time_col, bias_col, acc_col=None, maxbias_col=None, time_s
             dummy = np.array([None for _ in traj])
             traj = np.vstack([traj[:,:-1].T, dummy, traj[:,-1].T]).T
         traj[:, 0] *= time_scale_factor
+        if work_col is not None:
+            work = _loadtxt_with_optional_header(colvar, (work_col,))
+            traj = np.hstack([traj, work.reshape(-1, 1).astype(float)])
         return traj
 
     if threads > 1:

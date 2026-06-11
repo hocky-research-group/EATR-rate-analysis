@@ -80,6 +80,7 @@ class FloodingSetReport:
     ks_stat: float
     p_value: float
     ln_exp_beta_v: float
+    avg_work_kbt: float | None = None
 
 
 @dataclass
@@ -114,6 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tcol", type=int, default=0, help="the time column index in the COLVAR file")
     parser.add_argument("--vcol", type=int, default=2, help="the bias column index in the COLVAR file")
     parser.add_argument("--acol", type=int, default=None, help="the acceleration factor column index in the COLVAR file (only useful if OPESF is set)")
+    parser.add_argument("--wcol", type=int, default=None, help="the cumulative work column index in the COLVAR file (e.g. metad.work); if given, produces a ln(k_obs) vs ln(W/kBT) plot")
     parser.add_argument("--timeunit", type=np.float64, default=1e-12, help="the conversion factor from the time unit used in PLUMED to seconds")
     parser.add_argument("--energyunit", type=np.float64, default=1, help="the conversion factor from the energy unit used in PLUMED to kJ/mol (only needed if temperature was given in Kelvin)")
     parser.add_argument("--gammamin", type=np.float64, default=0, help="the minimum value of gamma to be checked")
@@ -204,6 +206,7 @@ def result_payload(result: FloodingAnalysisResult, plot_time_unit: str) -> dict[
                 "ks_stat": report.ks_stat,
                 "p_value": report.p_value,
                 "ln_exp_beta_v": report.ln_exp_beta_v,
+                "avg_work_kbt": report.avg_work_kbt,
             }
             for report in result.set_reports
         ],
@@ -250,7 +253,7 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
     datas = []
     events = []
     for i, colvars in enumerate(args.input):
-        data = RM.get_data(colvars, args.tcol, args.vcol, acc_col=args.acol, time_scale_factor=args.timeunit, threads=args.threads)
+        data = RM.get_data(colvars, args.tcol, args.vcol, acc_col=args.acol, time_scale_factor=args.timeunit, threads=args.threads, work_col=args.wcol)
         event = RM.get_event(data, maxlen=args.maxlen, maxtime=args.maxtime, num_events=num_eventss[i], log_files=log_filess[i], quiet=True)
         datas.append(data)
         events.append(event)
@@ -361,6 +364,11 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
                 ks_stat, p = ksc.ks_1samp_censored(final_times, event, lambda t: np.exp(-emp_rate * t))
 
             avg = np.mean(np.nanmean(np.exp(beta * v_data), axis=0))
+            avg_work_kbt: float | None = None
+            if args.wcol is not None:
+                # Column 4 is the cumulative work (kJ/mol); average the final value across all trajectories.
+                work_finals = np.array([float(traj[-1, 4]) for traj in data])
+                avg_work_kbt = float(beta * np.mean(work_finals))
             report = FloodingSetReport(
                 barrier=barrier,
                 transitioned=int(event.sum()),
@@ -372,6 +380,7 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
                 ks_stat=float(ks_stat),
                 p_value=float(p),
                 ln_exp_beta_v=float(np.log(avg)),
+                avg_work_kbt=avg_work_kbt,
             )
             return barrier, v_data, float(obs_rate), report, opesf_times_local, opesf_event_local
 

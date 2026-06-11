@@ -249,6 +249,38 @@ def plot_flooding_payload(
     plt.close(fig)
     written_paths.append(acceleration_path)
 
+    work_kbt_values = [report.get("avg_work_kbt") for report in reports]
+    if all(w is not None and w > 0 for w in work_kbt_values):
+        work_path = f"{prefix}_work_rate.png"
+        ln_work = np.log(np.array(work_kbt_values, dtype=float))
+        coeffs = np.polyfit(ln_work, log_kobs, 1)
+        fit_x = np.linspace(float(ln_work.min()) * 0.98, float(ln_work.max()) * 1.02, 200)
+        fit_y = np.polyval(coeffs, fit_x)
+        fig, ax = plt.subplots(figsize=(3.35, 2.23), constrained_layout=True)
+        if log_kobs_std is not None:
+            ax.errorbar(ln_work, log_kobs, yerr=log_kobs_std, marker="o", color=BLUE, capsize=3,
+                        linestyle="none", label="Simulation sets")
+        else:
+            ax.plot(ln_work, log_kobs, marker="o", linestyle="none", label="Simulation sets", color=BLUE)
+        ax.plot(fit_x, fit_y, color=BLACK, label=fr"fit: slope = {coeffs[0]:.3f}")
+        for report, xval, yval in zip(reports, ln_work, log_kobs):
+            ax.annotate(str(report["barrier"]), (xval, yval), textcoords="offset points", xytext=(4, 4), fontsize=8, color=GRAY)
+        ax.text(
+            0.03, 0.97,
+            f"slope = {coeffs[0]:.3f}\nintercept = {coeffs[1]:.3f}",
+            transform=ax.transAxes, va="top", ha="left", fontsize=9,
+            bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.9, "edgecolor": GRAY, "linewidth": 0.6},
+        )
+        if truerate is not None:
+            ax.axhline(truerate, linestyle=":", color=BLACK, label=fr"reference ln($k_0$) = {truerate:.3f}")
+        ax.set_xlabel(r"ln($\langle W \rangle$ / $k_\mathrm{B}T$)")
+        ax.set_ylabel(rate_axis_label("", unit_abbrev, observed=True).replace("Observed ", ""))
+        ax.legend(loc="lower right", handlelength=1.5)
+        style_axis(ax)
+        fig.savefig(work_path, dpi=220)
+        plt.close(fig)
+        written_paths.append(work_path)
+
     diagnostics = payload.get("flooding_diagnostics")
     if diagnostics:
         diagnostics_path = f"{prefix}_diagnostics.png"
