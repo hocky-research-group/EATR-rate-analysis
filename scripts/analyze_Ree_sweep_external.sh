@@ -59,7 +59,7 @@ exit
   --xlabel "MetaD hill deposition pace (ps)" \
   --method eatr-cdf imetad-cdf \
   --truerate 0.35967608559103206 \
-  -o "${OUT_DIR}/wt_regular_series.png"
+  -o "${OUT_DIR}/wt_regular_series.pdf"
 
 "${VENV_BIN}/eatr-flooding-analysis" \
   -i "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_opes/eruns_barr5"/run_*/opes_short.colvar --barrier 5 \

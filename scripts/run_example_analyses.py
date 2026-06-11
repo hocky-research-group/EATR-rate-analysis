@@ -272,7 +272,7 @@ def plot_regular_eatr(summaries: list[dict[str, float | str]]) -> None:
     axes[1].set_title("WT-MetaD Biasing Efficiency")
     axes[1].legend()
 
-    fig.savefig(OUTPUT_ROOT / "wt_regular_eatr_vs_pace.png", dpi=200)
+    fig.savefig(OUTPUT_ROOT / "wt_regular_eatr_vs_pace.pdf", dpi=200)
     plt.close(fig)
 
 
@@ -490,7 +490,7 @@ def plot_opes_observed_rate_vs_barrier(set_specs: list[dict[str, object]], boots
     ax.set_xlabel(r"OPES barrier (kJ mol$^{-1}$)")
     ax.set_ylabel(r"Observed ln($k_{\mathrm{obs}}$ / us$^{-1}$)")
     ax.set_title("OPES ln observed rate by barrier")
-    fig.savefig(OUTPUT_ROOT / "opes_observed_rate_vs_barrier.png", dpi=220)
+    fig.savefig(OUTPUT_ROOT / "opes_observed_rate_vs_barrier.pdf", dpi=220)
     plt.close(fig)
 
 
@@ -546,7 +546,7 @@ def plot_opes_ln_kobs_vs_acceleration(set_specs: list[dict[str, object]], diagno
         [str(spec["barrier_kj_mol"]) for spec in set_specs],
         "OPES sets",
         "OPES slope-style rate scaling",
-        "opes_ln_kobs_vs_acceleration.png",
+        "opes_ln_kobs_vs_acceleration.pdf",
     )
 
 
@@ -601,7 +601,7 @@ def run_opes_flooding() -> dict[str, object]:
     }
     with open(OUTPUT_ROOT / "opes_flooding_summary.json", "w", encoding="utf-8") as handle:
         json.dump(output, handle, indent=2)
-    save_flooding_plot("OPES EATR-flooding", diagnostics, labels, "opes_flooding_diagnostics.png", bootstrap_stats=bootstrap_stats, truerate=0.35967608559103206)
+    save_flooding_plot("OPES EATR-flooding", diagnostics, labels, "opes_flooding_diagnostics.pdf", bootstrap_stats=bootstrap_stats, truerate=0.35967608559103206)
     plot_opes_observed_rate_vs_barrier(set_specs, bootstrap_stats)
     plot_opes_ln_kobs_vs_acceleration(set_specs, diagnostics, bootstrap_stats)
     return output
@@ -677,8 +677,8 @@ def run_wt_flooding() -> dict[str, object]:
     }
     with open(OUTPUT_ROOT / "wt_flooding_summary.json", "w", encoding="utf-8") as handle:
         json.dump(output, handle, indent=2)
-    save_flooding_plot("WT-MetaD EATR-flooding (all paces)", diagnostics_all, labels, "wt_flooding_all_paces.png", bootstrap_stats=bootstrap_all, truerate=0.35967608559103206)
-    save_flooding_plot("WT-MetaD EATR-flooding (pace ≥ 100 ps)", diagnostics_filtered, filtered_labels, "wt_flooding_filtered_paces.png", bootstrap_stats=bootstrap_filtered, truerate=0.35967608559103206)
+    save_flooding_plot("WT-MetaD EATR-flooding (all paces)", diagnostics_all, labels, "wt_flooding_all_paces.pdf", bootstrap_stats=bootstrap_all, truerate=0.35967608559103206)
+    save_flooding_plot("WT-MetaD EATR-flooding (pace ≥ 100 ps)", diagnostics_filtered, filtered_labels, "wt_flooding_filtered_paces.pdf", bootstrap_stats=bootstrap_filtered, truerate=0.35967608559103206)
     plot_wt_observed_rate_vs_pace(set_specs, diagnostics_filtered, bootstrap_all)
     plot_wt_ln_kobs_vs_acceleration(set_specs, diagnostics_all, bootstrap_all)
     return output
@@ -698,7 +698,7 @@ def plot_wt_observed_rate_vs_pace(set_specs: list[dict[str, object]], diagnostic
     ax.set_title("WT-MetaD ln observed rate by pace")
     ax.axhline(float(ln_rate_s_to_ln_us(diagnostics_filtered["logk0_best"])), color="tab:red", linestyle="--", label="Filtered flooding ln k0*")
     ax.legend()
-    fig.savefig(OUTPUT_ROOT / "wt_observed_rate_vs_pace.png", dpi=220)
+    fig.savefig(OUTPUT_ROOT / "wt_observed_rate_vs_pace.pdf", dpi=220)
     plt.close(fig)
 
 
@@ -710,7 +710,7 @@ def plot_wt_ln_kobs_vs_acceleration(set_specs: list[dict[str, object]], diagnost
         [spec["label"].replace("eruns_pace", "") for spec in set_specs],
         "WT pace sets",
         "WT-MetaD slope-style rate scaling",
-        "wt_ln_kobs_vs_acceleration.png",
+        "wt_ln_kobs_vs_acceleration.pdf",
     )
 
 

@@ -63,7 +63,7 @@ done
   --method eatr-cdf imetad-cdf \
   --truerate 0.35967608559103206 \
   --time-unit "${PLOT_TIME_UNIT}" \
-  -o "${OUT_DIR}/wt_regular_series.png"
+  -o "${OUT_DIR}/wt_regular_series.pdf"
 
 
 "${PYTHON_BIN}" -m eatr_rates.rates_eatr_opes \

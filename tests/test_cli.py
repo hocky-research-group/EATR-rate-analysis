@@ -284,9 +284,9 @@ class CliTests(unittest.TestCase):
             self.assertIn("bootstrap_logk0_std", payload)
             self.assertIn("bootstrap_gamma_std", payload)
             self.assertEqual(len(payload["bootstrap_iterations"]), 6)
-            self.assertTrue((tmp_path / "flooding_bootstrap_observed_rate.png").exists())
-            self.assertTrue((tmp_path / "flooding_bootstrap_ln_kobs_vs_acceleration.png").exists())
-            self.assertTrue((tmp_path / "flooding_bootstrap_diagnostics.png").exists())
+            self.assertTrue((tmp_path / "flooding_bootstrap_observed_rate.pdf").exists())
+            self.assertTrue((tmp_path / "flooding_bootstrap_ln_kobs_vs_acceleration.pdf").exists())
+            self.assertTrue((tmp_path / "flooding_bootstrap_diagnostics.pdf").exists())
 
     @unittest.skipUnless(find_spec("numpy") and find_spec("scipy"), "numpy and scipy are required")
     def test_flooding_cli_writes_json_and_plots(self):
@@ -356,9 +356,9 @@ class CliTests(unittest.TestCase):
             self.assertIn("logk0", payload)
             self.assertEqual(len(payload["set_reports"]), 2)
             self.assertIn("flooding_diagnostics", payload)
-            self.assertTrue((tmp_path / "flooding_observed_rate.png").exists())
-            self.assertTrue((tmp_path / "flooding_ln_kobs_vs_acceleration.png").exists())
-            self.assertTrue((tmp_path / "flooding_diagnostics.png").exists())
+            self.assertTrue((tmp_path / "flooding_observed_rate.pdf").exists())
+            self.assertTrue((tmp_path / "flooding_ln_kobs_vs_acceleration.pdf").exists())
+            self.assertTrue((tmp_path / "flooding_diagnostics.pdf").exists())
 
     @unittest.skipUnless(find_spec("numpy") and find_spec("scipy"), "numpy and scipy are required")
     def test_plot_results_cli_writes_regular_series_and_cdf_figures(self):
@@ -367,8 +367,8 @@ class CliTests(unittest.TestCase):
             repo_root = Path(__file__).resolve().parents[1]
             input1 = tmp_path / "pace_1ps.json"
             input2 = tmp_path / "pace_10ps.json"
-            output = tmp_path / "regular.png"
-            cdf_output = tmp_path / "regular_cdf.png"
+            output = tmp_path / "regular.pdf"
+            cdf_output = tmp_path / "regular_cdf.pdf"
 
             input1.write_text(
                 json.dumps(

@@ -66,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     regular.add_argument("--method", choices=sorted(METHOD_KEYS), default=["eatr-cdf"], nargs="+", help="which method(s) to plot; pass multiple names to overlay them on the same axes")
     regular.add_argument("--noline", action="store_true", help="remove the connecting lines in the plots")
     regular.add_argument("--truerate", type=np.float64, default=None, help="optional true rate to compare to results")
-    regular.add_argument("-o", "--output", type=str, default="regular_series.png", help="output figure path")
+    regular.add_argument("-o", "--output", type=str, default="regular_series.pdf", help="output figure path")
     regular.add_argument("--cdf-output", type=str, default=None, help="optional output path for the per-pace empirical-vs-fit CDF figure; defaults to a sibling *_cdf file when CDF plot data are present")
     regular.add_argument("--time-unit", choices=TIME_UNIT_CHOICES, default=None, help="display time/rate units for plot labels and values; defaults to the JSON metadata or seconds")
 
@@ -196,7 +196,7 @@ def plot_flooding_payload(
     written_paths: list[str] = []
     plt = pyplot()
 
-    observed_path = f"{prefix}_observed_rate.png"
+    observed_path = f"{prefix}_observed_rate.pdf"
     fig, ax = plt.subplots(figsize=(3.35, 2.23), constrained_layout=True)
     if log_kobs_std is not None:
         ax.errorbar(condition_values, log_kobs, yerr=log_kobs_std, marker="o", color=BLUE, capsize=3, linestyle="-")
@@ -211,7 +211,7 @@ def plot_flooding_payload(
     plt.close(fig)
     written_paths.append(observed_path)
 
-    acceleration_path = f"{prefix}_ln_kobs_vs_acceleration.png"
+    acceleration_path = f"{prefix}_ln_kobs_vs_acceleration.pdf"
     xfit = np.linspace(float(np.min(ln_acceleration)) * 0.98, float(np.max(ln_acceleration)) * 1.02, 200)
     yfit = display_logk0 + gamma * xfit
     fig, ax = plt.subplots(figsize=(3.35, 2.23), constrained_layout=True)
@@ -251,7 +251,7 @@ def plot_flooding_payload(
 
     work_kbt_values = [report.get("avg_work_kbt") for report in reports]
     if all(w is not None and w > 0 for w in work_kbt_values):
-        work_path = f"{prefix}_work_rate.png"
+        work_path = f"{prefix}_work_rate.pdf"
         ln_work = np.log(np.array(work_kbt_values, dtype=float))
         coeffs = np.polyfit(ln_work, log_kobs, 1)
         fit_x = np.linspace(float(ln_work.min()) * 0.98, float(ln_work.max()) * 1.02, 200)
@@ -283,7 +283,7 @@ def plot_flooding_payload(
 
     diagnostics = payload.get("flooding_diagnostics")
     if diagnostics:
-        diagnostics_path = f"{prefix}_diagnostics.png"
+        diagnostics_path = f"{prefix}_diagnostics.pdf"
         gamma_grid = np.array(diagnostics["gamma_grid"], dtype=float)
         per_set = np.array(diagnostics["per_set_ln_k0"], dtype=float)
         mean_ln_k0 = np.array(diagnostics["mean_ln_k0"], dtype=float)
@@ -295,17 +295,20 @@ def plot_flooding_payload(
         fig, axes = plt.subplots(3, 1, figsize=(3.35, 6.85), sharex=True, gridspec_kw={"hspace": 0.04})
         display_per_set = per_set + np.log(seconds_per_unit)
         gamma_grid_arr = np.array(gamma_grid)
-        marker_kw = dict(marker=".", markersize=2.5, markeredgewidth=0)
+        scatter_kw = dict(s=12, zorder=3, linewidths=0)
         for idx, label in enumerate(set_labels):
-            axes[0].plot(gamma_grid, display_per_set[:, idx], label=label, color=SET_COLORS[idx % len(SET_COLORS)], **marker_kw)
+            color = SET_COLORS[idx % len(SET_COLORS)]
+            axes[0].plot(gamma_grid, display_per_set[:, idx], label=label, color=color)
+            axes[0].scatter(gamma_grid_arr, display_per_set[:, idx], color=color, **scatter_kw)
         axes[0].set_ylabel(rate_axis_label("Predicted", unit_abbrev))
         axes[0].legend(loc="lower left", ncol=2, handlelength=1.4, columnspacing=0.8)
 
         std_ln_k0 = np.sqrt(var_ln_k0)
         display_mean_ln_k0 = mean_ln_k0 + np.log(seconds_per_unit)
         display_logk0_best = logk0_best + np.log(seconds_per_unit)
-        axes[1].plot(gamma_grid, display_mean_ln_k0, color=BLUE, **marker_kw)
         axes[1].fill_between(gamma_grid, display_mean_ln_k0 - std_ln_k0, display_mean_ln_k0 + std_ln_k0, color=LIGHT_BLUE, alpha=0.9)
+        axes[1].plot(gamma_grid, display_mean_ln_k0, color=BLUE)
+        axes[1].scatter(gamma_grid_arr, display_mean_ln_k0, color=BLUE, **scatter_kw)
         axes[1].axvline(gamma_best, color=BLACK, linestyle="--", label=fr"min-var. $\gamma$ = {gamma_best:.2f}")
         axes[1].axhline(display_logk0_best, color=BLUE, linestyle="--", label=fr"mean ln($k_0$) = {display_logk0_best:.2f}")
         if truerate is not None:
@@ -313,7 +316,8 @@ def plot_flooding_payload(
         axes[1].set_ylabel(rate_axis_label("Mean", unit_abbrev))
         axes[1].legend(loc="lower left", handlelength=1.5)
 
-        axes[2].plot(gamma_grid, var_ln_k0, color=BLACK, **marker_kw)
+        axes[2].plot(gamma_grid, var_ln_k0, color=BLACK)
+        axes[2].scatter(gamma_grid_arr, var_ln_k0, color=BLACK, **scatter_kw)
         axes[2].axvline(gamma_best, color=BLACK, linestyle="--")
         axes[2].set_xlabel("gamma")
         axes[2].set_ylabel(r"Var[ln($k_0$)]")
@@ -331,7 +335,7 @@ def plot_flooding_payload(
     if diagnostics:
         conv = diagnostics.get("convergence_analysis")
         if conv:
-            convergence_path = f"{prefix}_convergence.png"
+            convergence_path = f"{prefix}_convergence.pdf"
             n_sets_arr = np.array(conv["n_sets"], dtype=int)
             gamma_conv = np.array(conv["gamma"], dtype=float)
             logk0_conv = np.array(conv["logk0"], dtype=float) + np.log(seconds_per_unit)
