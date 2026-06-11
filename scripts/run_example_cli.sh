@@ -3,15 +3,22 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_BIN="${ROOT_DIR}/.venv/bin"
+PYTHON_BIN="${VENV_BIN}/python"
 OUT_DIR="${ROOT_DIR}/example-data/test_results_cli"
 THREADS="${EATR_THREADS:-4}"
 NUMBOOTS="${EATR_NUMBOOTS:-50}"
+PLOT_TIME_UNIT="${EATR_PLOT_TIME_UNIT:-microseconds}"
 MPL_CACHE_DIR="${ROOT_DIR}/.matplotlib-cache"
 XDG_CACHE_DIR="${ROOT_DIR}/.cache"
 
 mkdir -p "${MPL_CACHE_DIR}" "${XDG_CACHE_DIR}"
 export MPLCONFIGDIR="${MPL_CACHE_DIR}"
 export XDG_CACHE_HOME="${XDG_CACHE_DIR}"
+
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+  echo "Expected Python interpreter under ${PYTHON_BIN}. Create the project .venv first." >&2
+  exit 1
+fi
 
 mkdir -p "${OUT_DIR}/wt_regular"
 
@@ -22,11 +29,12 @@ for idx in "${!PACE_STEPS[@]}"; do
   pace_step="${PACE_STEPS[$idx]}"
   pace_ps="${PACE_PS[$idx]}"
   pace_dir="${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_wt/eruns_pace${pace_step}"
-  "${VENV_BIN}/eatr-analysis" \
+  "${PYTHON_BIN}" -m eatr_rates \
     -i "${pace_dir}"/run_*/metad.colvar \
     --logfiles "${pace_dir}"/run_*/p.log \
     --temp 312 \
     --timeunit 1e-15 \
+    --plot-time-unit "${PLOT_TIME_UNIT}" \
     --tcol 0 \
     --vcol 2 \
     --acol 4 \
@@ -36,7 +44,7 @@ for idx in "${!PACE_STEPS[@]}"; do
     -o "${OUT_DIR}/wt_regular/pace_${pace_ps}ps.json"
 done
 
-"${VENV_BIN}/eatr-analysis-plot" regular-series \
+"${PYTHON_BIN}" -m eatr_rates.plot_results regular-series \
   -i \
   "${OUT_DIR}/wt_regular/pace_1ps.json" \
   "${OUT_DIR}/wt_regular/pace_10ps.json" \
@@ -50,9 +58,10 @@ done
   --labels 1e2 1e3 1e4 2e4 5e4 1e5 5e5 1e6 \
   --xlabel "MetaD hill deposition pace (ps)" \
   --method eatr-mle \
+  --time-unit "${PLOT_TIME_UNIT}" \
   -o "${OUT_DIR}/wt_regular_series.png"
 
-"${VENV_BIN}/eatr-flooding-analysis" \
+"${PYTHON_BIN}" -m eatr_rates.rates_eatr_opes \
   -i "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_opes/eruns_barr5"/run_*/opes_short.colvar --barrier 5 \
   -i "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_opes/eruns_barr7"/run_*/opes_short.colvar --barrier 7 \
   -i "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_opes/eruns_barr9"/run_*/opes_short.colvar --barrier 9 \
@@ -65,6 +74,7 @@ done
   --logfiles "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_opes/eruns_barr13"/run_*/p.log \
   --temp 312 \
   --timeunit 1e-15 \
+  --plot-time-unit "${PLOT_TIME_UNIT}" \
   --tcol 0 \
   --vcol 4 \
   --bootstrap --numboots "${NUMBOOTS}" \
@@ -72,14 +82,15 @@ done
   -q \
   -o "${OUT_DIR}/opes_flooding.json"
 
-"${VENV_BIN}/eatr-analysis-plot" flooding \
+"${PYTHON_BIN}" -m eatr_rates.plot_results flooding \
   -i "${OUT_DIR}/opes_flooding.json" \
   --condition-label "OPES barrier" \
   --condition-unit "kJ mol^-1" \
   --title-prefix "OPES flooding CLI" \
+  --time-unit "${PLOT_TIME_UNIT}" \
   -o "${OUT_DIR}/opes_cli"
 
-"${VENV_BIN}/eatr-flooding-analysis" \
+"${PYTHON_BIN}" -m eatr_rates.rates_eatr_opes \
   -i "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_wt/eruns_pace1e2"/run_*/metad.colvar --barrier 1 \
   -i "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_wt/eruns_pace1e3"/run_*/metad.colvar --barrier 10 \
   -i "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_wt/eruns_pace1e4"/run_*/metad.colvar --barrier 100 \
@@ -98,6 +109,7 @@ done
   --logfiles "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_wt/eruns_pace1e6"/run_*/p.log \
   --temp 312 \
   --timeunit 1e-15 \
+  --plot-time-unit "${PLOT_TIME_UNIT}" \
   --tcol 0 \
   --vcol 2 \
   --acol 4 \
@@ -107,9 +119,10 @@ done
   -q \
   -o "${OUT_DIR}/wt_flooding.json"
 
-"${VENV_BIN}/eatr-analysis-plot" flooding \
+"${PYTHON_BIN}" -m eatr_rates.plot_results flooding \
   -i "${OUT_DIR}/wt_flooding.json" \
   --condition-label "MetaD pace" \
   --condition-unit "ps" \
   --title-prefix "WT flooding CLI" \
+  --time-unit "${PLOT_TIME_UNIT}" \
   -o "${OUT_DIR}/wt_cli"

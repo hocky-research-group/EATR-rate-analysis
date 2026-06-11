@@ -19,6 +19,60 @@ def _write_colvar(path: Path, rows) -> None:
 
 class CliTests(unittest.TestCase):
     @unittest.skipUnless(find_spec("numpy") and find_spec("scipy"), "numpy and scipy are required")
+    def test_rates_cli_plot_time_unit_changes_metadata_not_raw_ln_k(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            colvar1 = tmp_path / "traj1.colvar"
+            colvar2 = tmp_path / "traj2.colvar"
+            output_seconds = tmp_path / "rates_seconds.json"
+            output_microseconds = tmp_path / "rates_microseconds.json"
+            repo_root = Path(__file__).resolve().parents[1]
+
+            _write_colvar(colvar1, [(0, 0, 0.1), (1, 0, 0.15), (2, 0, 0.2), (3, 0, 0.25)])
+            _write_colvar(colvar2, [(0, 0, 0.2), (1, 0, 0.25), (2, 0, 0.3), (3, 0, 0.35)])
+
+            common_args = [
+                sys.executable,
+                "-m",
+                "eatr_rates",
+                "-i",
+                str(colvar1),
+                str(colvar2),
+                "-e",
+                "--threads",
+                "1",
+                "-q",
+            ]
+
+            result_seconds = subprocess.run(
+                [*common_args, "--plot-time-unit", "seconds", "-o", str(output_seconds)],
+                cwd=tmp_path,
+                env={**os.environ, "PYTHONPATH": str(repo_root)},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            result_microseconds = subprocess.run(
+                [*common_args, "--plot-time-unit", "microseconds", "-o", str(output_microseconds)],
+                cwd=tmp_path,
+                env={**os.environ, "PYTHONPATH": str(repo_root)},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result_seconds.returncode, 0, result_seconds.stderr)
+            self.assertEqual(result_microseconds.returncode, 0, result_microseconds.stderr)
+
+            payload_seconds = json.loads(output_seconds.read_text(encoding="utf-8"))
+            payload_microseconds = json.loads(output_microseconds.read_text(encoding="utf-8"))
+
+            self.assertEqual(payload_seconds["plot_time_unit"], "seconds")
+            self.assertEqual(payload_microseconds["plot_time_unit"], "microseconds")
+            self.assertEqual(payload_seconds["EATR MLE ln k"], payload_microseconds["EATR MLE ln k"])
+            self.assertEqual(payload_seconds["EATR MLE gamma"], payload_microseconds["EATR MLE gamma"])
+
+    @unittest.skipUnless(find_spec("numpy") and find_spec("scipy"), "numpy and scipy are required")
     def test_rates_cli_bootstrap_threads_writes_ci_output(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
