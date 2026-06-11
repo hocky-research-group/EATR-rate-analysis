@@ -20,6 +20,8 @@ if [[ ! -x "${PYTHON_BIN}" ]]; then
   exit 1
 fi
 
+set -x
+
 mkdir -p "${OUT_DIR}/wt_regular"
 
 PACE_STEPS=(1e2 1e3 1e4 2e4 5e4 1e5 5e5 1e6)
@@ -33,15 +35,17 @@ for idx in "${!PACE_STEPS[@]}"; do
     -i "${pace_dir}"/run_*/metad.colvar \
     --logfiles "${pace_dir}"/run_*/p.log \
     --temp 312 \
-    --timeunit 1e-15 \
+    --timeunit 1e-12 \
     --plot-time-unit "${PLOT_TIME_UNIT}" \
     --tcol 0 \
     --vcol 2 \
     --acol 4 \
-    -e \
+    -E \
+    --bootstrap --numboots "${NUMBOOTS}" \
     --threads "${THREADS}" \
     -q \
     -o "${OUT_DIR}/wt_regular/pace_${pace_ps}ps.json"
+    exit
 done
 
 "${PYTHON_BIN}" -m eatr_rates.plot_results regular-series \
@@ -57,9 +61,10 @@ done
   --xvalues 1 10 100 200 500 1000 5000 10000 \
   --labels 1e2 1e3 1e4 2e4 5e4 1e5 5e5 1e6 \
   --xlabel "MetaD hill deposition pace (ps)" \
-  --method eatr-mle \
+  --method eatr-cdf \
   --time-unit "${PLOT_TIME_UNIT}" \
   -o "${OUT_DIR}/wt_regular_series.png"
+
 
 "${PYTHON_BIN}" -m eatr_rates.rates_eatr_opes \
   -i "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_opes/eruns_barr5"/run_*/opes_short.colvar --barrier 5 \
@@ -73,7 +78,7 @@ done
   --logfiles "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_opes/eruns_barr11"/run_*/p.log \
   --logfiles "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_opes/eruns_barr13"/run_*/p.log \
   --temp 312 \
-  --timeunit 1e-15 \
+  --timeunit 1e-12 \
   --plot-time-unit "${PLOT_TIME_UNIT}" \
   --tcol 0 \
   --vcol 4 \
@@ -108,7 +113,7 @@ done
   --logfiles "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_wt/eruns_pace5e5"/run_*/p.log \
   --logfiles "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_wt/eruns_pace1e6"/run_*/p.log \
   --temp 312 \
-  --timeunit 1e-15 \
+  --timeunit 1e-12 \
   --plot-time-unit "${PLOT_TIME_UNIT}" \
   --tcol 0 \
   --vcol 2 \

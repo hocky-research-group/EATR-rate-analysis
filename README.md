@@ -64,7 +64,6 @@ For development:
 pip install -e ".[dev]"
 ```
 
-If you want to reproduce the example plots in this repository, you will also need `matplotlib`.
 
 ## Command Overview
 
@@ -105,12 +104,19 @@ Important arguments:
   Max-bias column index if present.
 - `--logfiles`, `--maxlen`, `--maxtime`, `--numevents`
   Ways to determine which runs actually transitioned. Use exactly one when not all trajectories transition.
-- `--cores`, `--threads`
-  Analysis parallelism controls. `--threads` is a convenient worker-count alias; `--cores` controls the lower-level estimator multiprocessing.
-- `-m`, `-M`, `-k`, `-K`, `-e`, `-E`
-  Select the estimator(s) to run.
+- `--threads`
+  Number of parallel workers. When `--bootstrap` is set, runs bootstrap resamples concurrently using threads. Otherwise, used as the multiprocessing core count for inner CDF computations.
+- `-m`/`-M`, `-k`/`-K`, `-e`/`-E`
+  Select estimator(s). Lowercase is MLE, uppercase is CDF fitting:
+  `-m`/`-M` iMetaD, `-k`/`-K` KTR, `-e`/`-E` EATR.
+  Multiple flags can be combined (e.g. `-eE` runs both EATR MLE and CDF).
 - `-b`, `--bootstrap`
-  Enable bootstrap uncertainty analysis.
+  Enable bootstrap uncertainty analysis. Use `--numboots` to set the number
+  of resamples (default: 100).
+- `--plot-time-unit`
+  Time unit for rate values in plots and JSON metadata (e.g. `microseconds`,
+  `milliseconds`, `seconds`). Does not affect the numerical computation.
+  Default: `seconds`.
 - `-q`, `--quiet`
   Suppress terminal printing and only write JSON output.
 
@@ -159,10 +165,17 @@ Important arguments:
   Run independent set/bootstrap work in parallel.
 - `--logfiles`, `--maxlen`, `--maxtime`, `--numevents`
   Set-wise transition detection.
+- `-b`, `--bootstrap`, `--numboots`
+  Enable bootstrap uncertainty analysis. `--numboots` sets the number of
+  resamples (default: 100).
+- `--plot-time-unit`
+  Time unit for rate values in generated plots and JSON metadata. Default: `seconds`.
 - `--cdf`
   Fit the observed rate for each set using the CDF instead of the MLE.
 - `--timefirst`
-  Change how the exponential average is aggregated.
+  Compute the exponential average `<e^{βγV}>` by first averaging over time
+  within each trajectory and then over trajectories. Default is to average
+  over trajectories first.
 - `--nooffset`
   Disable automatic addition of the OPES barrier offset to the reported bias.
 - `--opesf`
@@ -178,7 +191,7 @@ Notes:
 
 - For OPES data produced with `OPES_METAD ... BARRIER=...`, you usually want to pass the same `BARRIER` values here and leave `--nooffset` unset.
 - The method is also useful for MetaD if you have several sets with systematically varied deposition pace.
-- By default the command now writes the flooding JSON and the diagnostic figures in one pass. Those plots are intended to be inspected together with the numerical fit.
+- The command writes the flooding JSON and the diagnostic figures in one pass. Those plots are intended to be inspected together with the numerical fit.
 
 ### `eatr-check-order`
 
@@ -192,7 +205,7 @@ eatr-check-order -i run_*/metad.colvar -l run_*/p.log -o order.dat
 
 ### `eatr-analysis-plot`
 
-This plotting helper consumes JSON outputs written by `eatr-analysis` or `eatr-flooding-analysis` and generates figures without rerunning the numerical analysis. It is still useful if you want to replot a flooding result with different labels or a different output prefix, but `eatr-flooding-analysis` now generates its own flooding plots by default.
+This plotting helper consumes JSON outputs written by `eatr-analysis` or `eatr-flooding-analysis` and generates figures without rerunning the numerical analysis. It is useful if you want to replot with different labels, a different output prefix, or a different time unit, since `eatr-flooding-analysis` already generates flooding plots by default.
 
 Regular-series example:
 
@@ -336,7 +349,7 @@ eatr-flooding-analysis \
   --logfiles example-data/Ree_Data/E_end_end_distance_opes/eruns_barr11/run_*/p.log \
   --logfiles example-data/Ree_Data/E_end_end_distance_opes/eruns_barr13/run_*/p.log \
   --temp 312 \
-  --timeunit 1e-15 \
+  --timeunit 1e-12 \
   --tcol 0 \
   --vcol 4 \
   --opesf
@@ -374,14 +387,14 @@ Why these columns:
 
 The flooding paper shows that EATR-flooding can also be applied to MetaD by comparing sets with different deposition pace. In that interpretation, the pace is the stepped biasing condition.
 
-The repository now includes a CLI-only example workflow that runs the packaged commands and then plots from their JSON outputs:
+The repository includes a CLI-only example workflow that runs the packaged commands and then plots from their JSON outputs:
 
 ```bash
 bash scripts/run_example_cli.sh
 ```
 
 That script writes JSON and figure outputs under [example-data/test_results_cli](example-data/test_results_cli).
-For the WT pace ladder it uses `EATR MLE` to keep the shell workflow practical, and for the flooding workflows it enables bootstrap uncertainty analysis. By default it uses `50` bootstrap replicas where bootstrap is enabled; for a faster smoke run you can lower that with `EATR_NUMBOOTS`, for example `EATR_NUMBOOTS=5 bash scripts/run_example_cli.sh`.
+For the WT pace ladder it uses EATR CDF (`-E`), and for the flooding workflows it enables bootstrap uncertainty analysis. By default it uses 50 bootstrap replicas where bootstrap is enabled; for a faster smoke run you can lower that with `EATR_NUMBOOTS`, for example `EATR_NUMBOOTS=5 bash scripts/run_example_cli.sh`.
 
 For comparison, the repository also includes the Python example runner:
 
@@ -389,7 +402,7 @@ For comparison, the repository also includes the Python example runner:
 .venv/bin/python scripts/run_example_analyses.py
 ```
 
-That script writes bootstrap-backed summaries and plots with reported rates converted to `us^-1` and pace units in `ps`. The current example workflow uses `50` trajectory-resampling bootstrap replicas per analysis.
+That script writes bootstrap-backed summaries and plots with reported rates converted to `us^-1` and pace units in `ps`. It uses 50 trajectory-resampling bootstrap replicas per analysis.
 
 If you want to speed up the example workflow, you can enable threaded execution over independent gamma-grid and bootstrap tasks:
 
@@ -405,6 +418,7 @@ The generated files are:
 - [wt_flooding_all_paces.png](example-data/test_results/wt_flooding_all_paces.png)
 - [wt_flooding_filtered_paces.png](example-data/test_results/wt_flooding_filtered_paces.png)
 - [wt_observed_rate_vs_pace.png](example-data/test_results/wt_observed_rate_vs_pace.png)
+- [wt_ln_kobs_vs_acceleration.png](example-data/test_results/wt_ln_kobs_vs_acceleration.png)
 - [opes_flooding_summary.json](example-data/test_results/opes_flooding_summary.json)
 - [opes_flooding_diagnostics.png](example-data/test_results/opes_flooding_diagnostics.png)
 - [opes_observed_rate_vs_barrier.png](example-data/test_results/opes_observed_rate_vs_barrier.png)
@@ -412,7 +426,7 @@ The generated files are:
 
 ## Python Usage
 
-The library functions remain available from Python, and the packaged CLI modules now separate the numerical analysis from output formatting:
+The library functions remain available from Python. The packaged CLI modules separate the numerical analysis from output formatting:
 
 - [eatr_rates/rates_cmd.py](eatr_rates/rates_cmd.py)
 - [eatr_rates/rates_eatr_opes.py](eatr_rates/rates_eatr_opes.py)
