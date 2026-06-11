@@ -262,15 +262,17 @@ def plot_flooding_payload(
 
         fig, axes = plt.subplots(3, 1, figsize=(3.35, 6.85), sharex=True, gridspec_kw={"hspace": 0.04})
         display_per_set = per_set + np.log(seconds_per_unit)
+        gamma_grid_arr = np.array(gamma_grid)
+        marker_kw = dict(marker=".", markersize=2.5, markeredgewidth=0)
         for idx, label in enumerate(set_labels):
-            axes[0].plot(gamma_grid, display_per_set[:, idx], label=label, color=SET_COLORS[idx % len(SET_COLORS)])
+            axes[0].plot(gamma_grid, display_per_set[:, idx], label=label, color=SET_COLORS[idx % len(SET_COLORS)], **marker_kw)
         axes[0].set_ylabel(rate_axis_label("Predicted", unit_abbrev))
         axes[0].legend(loc="lower left", ncol=2, handlelength=1.4, columnspacing=0.8)
 
         std_ln_k0 = np.sqrt(var_ln_k0)
         display_mean_ln_k0 = mean_ln_k0 + np.log(seconds_per_unit)
         display_logk0_best = logk0_best + np.log(seconds_per_unit)
-        axes[1].plot(gamma_grid, display_mean_ln_k0, color=BLUE)
+        axes[1].plot(gamma_grid, display_mean_ln_k0, color=BLUE, **marker_kw)
         axes[1].fill_between(gamma_grid, display_mean_ln_k0 - std_ln_k0, display_mean_ln_k0 + std_ln_k0, color=LIGHT_BLUE, alpha=0.9)
         axes[1].axvline(gamma_best, color=BLACK, linestyle="--", label=fr"min-var. $\gamma$ = {gamma_best:.2f}")
         axes[1].axhline(display_logk0_best, color=BLUE, linestyle="--", label=fr"mean ln($k_0$) = {display_logk0_best:.2f}")
@@ -279,7 +281,7 @@ def plot_flooding_payload(
         axes[1].set_ylabel(rate_axis_label("Mean", unit_abbrev))
         axes[1].legend(loc="lower left", handlelength=1.5)
 
-        axes[2].plot(gamma_grid, var_ln_k0, color=BLACK)
+        axes[2].plot(gamma_grid, var_ln_k0, color=BLACK, **marker_kw)
         axes[2].axvline(gamma_best, color=BLACK, linestyle="--")
         axes[2].set_xlabel("gamma")
         axes[2].set_ylabel(r"Var[ln($k_0$)]")
