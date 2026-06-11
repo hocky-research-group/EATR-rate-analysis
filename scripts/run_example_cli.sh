@@ -61,6 +61,7 @@ done
   --labels 1e2 1e3 1e4 2e4 5e4 1e5 5e5 1e6 \
   --xlabel "MetaD hill deposition pace (ps)" \
   --method eatr-cdf imetad-cdf \
+  --truerate 0.35967608559103206 \
   --time-unit "${PLOT_TIME_UNIT}" \
   -o "${OUT_DIR}/wt_regular_series.png"
 
@@ -83,6 +84,7 @@ done
   --vcol 4 \
   --bootstrap --numboots "${NUMBOOTS}" \
   --threads "${THREADS}" \
+  --truerate 0.35967608559103206 \
   -q \
   -o "${OUT_DIR}/opes_flooding.json"
 
@@ -92,6 +94,7 @@ done
   --condition-unit "kJ mol^-1" \
   --title-prefix "OPES flooding CLI" \
   --time-unit "${PLOT_TIME_UNIT}" \
+  --truerate 0.35967608559103206 \
   -o "${OUT_DIR}/opes_cli"
 
 "${PYTHON_BIN}" -m eatr_rates.rates_eatr_opes \
@@ -120,6 +123,7 @@ done
   --nooffset \
   --bootstrap --numboots "${NUMBOOTS}" \
   --threads "${THREADS}" \
+  --truerate 0.35967608559103206 \
   -q \
   -o "${OUT_DIR}/wt_flooding.json"
 
@@ -129,4 +133,5 @@ done
   --condition-unit "ps" \
   --title-prefix "WT flooding CLI" \
   --time-unit "${PLOT_TIME_UNIT}" \
+  --truerate 0.35967608559103206 \
   -o "${OUT_DIR}/wt_cli"

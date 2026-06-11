@@ -94,6 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--condition-unit", type=str, default="", help="unit suffix for the per-set condition values in generated plots")
     parser.add_argument("--title-prefix", type=str, default="Flooding analysis", help="title prefix for the generated diagnostic figure")
     parser.add_argument("--plot-time-unit", choices=TIME_UNIT_CHOICES, default="seconds", help="display time unit for generated plots and JSON metadata (DEFAULT: seconds)")
+    parser.add_argument("--truerate", type=float, default=None, help="reference ln(k0) value in the display time unit; drawn as a dashed line on the acceleration and diagnostics plots")
     return parser
 
 
@@ -386,6 +387,7 @@ def main(argv: list[str] | None = None) -> int:
             condition_unit=args.condition_unit,
             title_prefix=args.title_prefix,
             time_unit=args.plot_time_unit,
+            truerate=args.truerate,
         )
     return 0
 

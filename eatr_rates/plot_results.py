@@ -77,6 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     flooding.add_argument("--title-prefix", type=str, default="Flooding analysis", help="title prefix for the generated figures")
     flooding.add_argument("-o", "--output-prefix", type=str, default="flooding", help="prefix for generated figure files")
     flooding.add_argument("--time-unit", choices=TIME_UNIT_CHOICES, default=None, help="display time/rate units for plot labels and values; defaults to the JSON metadata or seconds")
+    flooding.add_argument("--truerate", type=float, default=None, help="reference ln(k0) value in the display time unit; drawn as a dashed horizontal line on the acceleration and diagnostics plots")
 
     return parser
 
@@ -160,6 +161,7 @@ def plot_flooding_payload(
     condition_unit: str = "",
     title_prefix: str = "Flooding analysis",
     time_unit: str | None = None,
+    truerate: float | None = None,
 ) -> list[str]:
     reports = payload["set_reports"]
     if not reports:
@@ -237,6 +239,8 @@ def plot_flooding_payload(
         fontsize=9,
         bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.9, "edgecolor": GRAY, "linewidth": 0.6},
     )
+    if truerate is not None:
+        ax.axhline(truerate, linestyle=":", color=BLACK, label=fr"reference ln($k_0$) = {truerate:.3f}")
     ax.set_xlabel(r"ln acceleration factor, ln($\alpha$)")
     ax.set_ylabel(rate_axis_label("", unit_abbrev, observed=True).replace("Observed ", ""))
     style_axis(ax)
@@ -270,6 +274,8 @@ def plot_flooding_payload(
         axes[1].fill_between(gamma_grid, display_mean_ln_k0 - std_ln_k0, display_mean_ln_k0 + std_ln_k0, color=LIGHT_BLUE, alpha=0.9)
         axes[1].axvline(gamma_best, color=BLACK, linestyle="--", label=fr"min-var. $\gamma$ = {gamma_best:.2f}")
         axes[1].axhline(display_logk0_best, color=BLUE, linestyle="--", label=fr"mean ln($k_0$) = {display_logk0_best:.2f}")
+        if truerate is not None:
+            axes[1].axhline(truerate, linestyle=":", color=BLACK, label=fr"reference ln($k_0$) = {truerate:.3f}")
         axes[1].set_ylabel(rate_axis_label("Mean", unit_abbrev))
         axes[1].legend(loc="lower left", handlelength=1.5)
 
@@ -324,8 +330,8 @@ def plot_regular_series_cdfs(payloads, labels, key: str, output: str, time_unit:
             raise SystemExit("CDF plots require strictly positive transition times for log-scaled x-axis output.")
         display_times = times / seconds_per_unit
         positive_times.append(display_times)
-        ax.plot(display_times, fit, color=color, linewidth=1.4, label=label)
         ax.plot(display_times, ecdf, linestyle="none", marker="o", markersize=3.2, color=color)
+        ax.plot(display_times, fit, color=color, linewidth=1.4, label=label)
     ax.text(0.03, 0.97, "points: empirical CDF\nlines: EATR fit", transform=ax.transAxes, va="top", ha="left", fontsize=8.5)
     ax.set_xscale("log")
     if positive_times:
@@ -529,6 +535,7 @@ def plot_flooding(args: argparse.Namespace) -> int:
         condition_unit=args.condition_unit,
         title_prefix=args.title_prefix,
         time_unit=args.time_unit,
+        truerate=args.truerate,
     )
     return 0
 
