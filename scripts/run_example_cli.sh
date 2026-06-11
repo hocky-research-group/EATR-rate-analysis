@@ -84,18 +84,13 @@ done
   --vcol 4 \
   --bootstrap --numboots "${NUMBOOTS}" \
   --threads "${THREADS}" \
-  --truerate 0.35967608559103206 \
-  -q \
-  -o "${OUT_DIR}/opes_flooding.json"
-
-"${PYTHON_BIN}" -m eatr_rates.plot_results flooding \
-  -i "${OUT_DIR}/opes_flooding.json" \
   --condition-label "OPES barrier" \
   --condition-unit "kJ mol^-1" \
   --title-prefix "OPES flooding CLI" \
-  --time-unit "${PLOT_TIME_UNIT}" \
+  --plot-prefix "${OUT_DIR}/opes_cli" \
   --truerate 0.35967608559103206 \
-  -o "${OUT_DIR}/opes_cli"
+  -q \
+  -o "${OUT_DIR}/opes_flooding.json"
 
 "${PYTHON_BIN}" -m eatr_rates.rates_eatr_opes \
   -i "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_wt/eruns_pace1e2"/run_*/metad.colvar --barrier 1 \
@@ -123,15 +118,10 @@ done
   --nooffset \
   --bootstrap --numboots "${NUMBOOTS}" \
   --threads "${THREADS}" \
-  --truerate 0.35967608559103206 \
-  -q \
-  -o "${OUT_DIR}/wt_flooding.json"
-
-"${PYTHON_BIN}" -m eatr_rates.plot_results flooding \
-  -i "${OUT_DIR}/wt_flooding.json" \
   --condition-label "MetaD pace" \
   --condition-unit "ps" \
   --title-prefix "WT flooding CLI" \
-  --time-unit "${PLOT_TIME_UNIT}" \
+  --plot-prefix "${OUT_DIR}/wt_cli" \
   --truerate 0.35967608559103206 \
-  -o "${OUT_DIR}/wt_cli"
+  -q \
+  -o "${OUT_DIR}/wt_flooding.json"
