@@ -207,14 +207,14 @@ eatr-check-order -i run_*/metad.colvar -l run_*/p.log -o order.dat
 
 This plotting helper consumes JSON outputs written by `eatr-analysis` or `eatr-flooding-analysis` and generates figures without rerunning the numerical analysis. It is useful if you want to replot with different labels, a different output prefix, or a different time unit, since `eatr-flooding-analysis` already generates flooding plots by default.
 
-Regular-series example:
+Regular-series example (default method is `eatr-cdf`; pass multiple methods to overlay them):
 
 ```bash
 eatr-analysis-plot regular-series \
   -i pace_1ps.json pace_10ps.json pace_100ps.json \
   --xvalues 1 10 100 \
   --xlabel "MetaD hill deposition pace (ps)" \
-  --method eatr-comparison \
+  --method eatr-cdf imetad-cdf \
   -o wt_regular_series.png
 ```
 

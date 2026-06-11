@@ -41,6 +41,17 @@ METHOD_KEYS = {
     "eatr-cdf": ("EATR CDF ln k", "EATR CDF gamma"),
 }
 
+METHOD_DISPLAY_NAMES = {
+    "imetad-mle": "iMetaD MLE",
+    "imetad-cdf": "iMetaD CDF",
+    "ktr-mle": "KTR MLE",
+    "ktr-cdf": "KTR CDF",
+    "eatr-mle": "EATR MLE",
+    "eatr-cdf": "EATR CDF",
+}
+
+METHOD_MARKERS = ["o", "s", "^", "D", "v", "P"]
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
@@ -52,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     regular.add_argument("--labels", nargs="+", default=None, help="optional point labels matching the input JSON files")
     regular.add_argument("--xlabel", type=str, default="Condition", help="x-axis label")
     regular.add_argument("--xscale", choices=["linear", "log"], default="log", help="x-axis scaling")
-    regular.add_argument("--method", choices=sorted(METHOD_KEYS), default="eatr-mle", help="which method keys to plot")
+    regular.add_argument("--method", choices=sorted(METHOD_KEYS), default=["eatr-cdf"], nargs="+", help="which method(s) to plot; pass multiple names to overlay them on the same axes")
     regular.add_argument("--noline", action="store_true", help="remove the connecting lines in the plots")
     regular.add_argument("--truerate", type=np.float64, default=None, help="optional true rate to compare to results")
     regular.add_argument("-o", "--output", type=str, default="regular_series.png", help="output figure path")
@@ -328,36 +339,19 @@ def plot_regular_series_cdfs(payloads, labels, key: str, output: str, time_unit:
     plt.close(fig)
 
 
-def plot_regular_series(args: argparse.Namespace) -> int:
-    if args.xvalues is not None and len(args.input) != len(args.xvalues):
-        raise SystemExit("The number of --input files must match the number of --xvalues.")
-    if args.labels is not None and len(args.labels) != len(args.input):
-        raise SystemExit("If provided, --labels must match the number of --input files.")
-
-    payloads = [load_json(path) for path in args.input]
-    _, unit_abbrev, seconds_per_unit = get_plot_time_unit(payloads, args.time_unit)
-    xvalues = autodetect_xvalues(args.input) if args.xvalues is None else np.array(args.xvalues, dtype=float)
-    labels = args.labels if args.labels is not None else [Path(path).stem for path in args.input]
-    linestyle = '' if args.noline else '-'
-
-    if args.method == "eatr-comparison":
-        return plot_eatr_comparison(payloads, xvalues, labels, args.xlabel, args.xscale, args.output, time_unit=args.time_unit)
-
-    log_key, gamma_key = METHOD_KEYS[args.method]
-
-    log_values = convert_log_rates(np.array([float(payload[log_key]) for payload in payloads], dtype=float), seconds_per_unit)
+def _collect_series(payloads, log_key, gamma_key, seconds_per_unit):
+    """Return (log_values, log_error, gamma_values, gamma_error) for one method."""
+    log_values = convert_log_rates(
+        np.array([float(payload[log_key]) for payload in payloads], dtype=float),
+        seconds_per_unit,
+    )
     log_error = None
     if any(f"{log_key} std" in payload or f"{log_key} CI" in payload for payload in payloads):
-        lower = []
-        upper = []
+        lower, upper = [], []
         for payload in payloads:
             err = extract_uncertainty(payload, log_key)
-            if err is None:
-                lower.append(0.0)
-                upper.append(0.0)
-            else:
-                lower.append(float(err[0][0]))
-                upper.append(float(err[1][0]))
+            lower.append(0.0 if err is None else float(err[0][0]))
+            upper.append(0.0 if err is None else float(err[1][0]))
         log_error = np.array([lower, upper], dtype=float)
 
     gamma_values = None
@@ -365,73 +359,117 @@ def plot_regular_series(args: argparse.Namespace) -> int:
     if gamma_key is not None and all(gamma_key in payload for payload in payloads):
         gamma_values = np.array([float(payload[gamma_key]) for payload in payloads], dtype=float)
         if any(f"{gamma_key} std" in payload or f"{gamma_key} CI" in payload for payload in payloads):
-            lower = []
-            upper = []
+            lower, upper = [], []
             for payload in payloads:
                 err = extract_uncertainty(payload, gamma_key)
-                if err is None:
-                    lower.append(0.0)
-                    upper.append(0.0)
-                else:
-                    lower.append(float(err[0][0]))
-                    upper.append(float(err[1][0]))
+                lower.append(0.0 if err is None else float(err[0][0]))
+                upper.append(0.0 if err is None else float(err[1][0]))
             gamma_error = np.array([lower, upper], dtype=float)
 
+    return log_values, log_error, gamma_values, gamma_error
+
+
+def plot_regular_series(args: argparse.Namespace) -> int:
+    if args.xvalues is not None and len(args.input) != len(args.xvalues):
+        raise SystemExit("The number of --input files must match the number of --xvalues.")
+    if args.labels is not None and len(args.labels) != len(args.input):
+        raise SystemExit("If provided, --labels must match the number of --input files.")
+
+    methods = args.method  # list due to nargs="+"
+    payloads = [load_json(path) for path in args.input]
+    _, unit_abbrev, seconds_per_unit = get_plot_time_unit(payloads, args.time_unit)
+    xvalues = autodetect_xvalues(args.input) if args.xvalues is None else np.array(args.xvalues, dtype=float)
+    labels = args.labels if args.labels is not None else [Path(path).stem for path in args.input]
+    linestyle = "" if args.noline else "-"
+
+    if methods == ["eatr-comparison"]:
+        return plot_eatr_comparison(payloads, xvalues, labels, args.xlabel, args.xscale, args.output, time_unit=args.time_unit)
+
+    multi = len(methods) > 1
+    # Show gamma panel only when every selected method has a gamma key
+    show_gamma = all(METHOD_KEYS[m][1] is not None for m in methods)
+
     plt = pyplot()
-    ncols = 2 if gamma_values is not None else 1
-    if ncols == 2:
+    if show_gamma:
         fig, axes = plt.subplots(2, 1, figsize=(3.35, 5.35), sharex=True, gridspec_kw={"hspace": 0.04})
     else:
-        fig, axes = plt.subplots(1, 1, figsize=(3.35, 2.23), constrained_layout=True)
-        axes = [axes]
+        fig, axes_single = plt.subplots(1, 1, figsize=(3.35, 2.23), constrained_layout=True)
+        axes = [axes_single]
 
-    if log_error is None:
-        axes[0].plot(xvalues, log_values, linestyle=linestyle, marker="o", color=BLUE)
-    else:
-        axes[0].errorbar(
-            xvalues, log_values, yerr=log_error, linestyle=linestyle, marker="o", capsize=2.5,
-            color=BLUE, ecolor=BLUE, elinewidth=1.0, markerfacecolor=BLUE, markeredgecolor=BLUE
+    for idx, method in enumerate(methods):
+        log_key, gamma_key = METHOD_KEYS[method]
+        color = SET_COLORS[idx % len(SET_COLORS)]
+        marker = METHOD_MARKERS[idx % len(METHOD_MARKERS)]
+        series_label = METHOD_DISPLAY_NAMES[method] if multi else None
+
+        log_values, log_error, gamma_values, gamma_error = _collect_series(
+            payloads, log_key, gamma_key, seconds_per_unit
         )
-    for label, xval, yval in zip(labels, xvalues, log_values):
-        axes[0].annotate(label, (xval, yval), textcoords="offset points", xytext=(4, 4), fontsize=8, color=GRAY)
+
+        if log_error is None:
+            axes[0].plot(xvalues, log_values, linestyle=linestyle, marker=marker, color=color, label=series_label)
+        else:
+            axes[0].errorbar(
+                xvalues, log_values, yerr=log_error,
+                linestyle=linestyle, marker=marker, capsize=2.5,
+                color=color, ecolor=color, elinewidth=1.0,
+                markerfacecolor=color, markeredgecolor=color,
+                label=series_label,
+            )
+        if not multi:
+            for label, xval, yval in zip(labels, xvalues, log_values):
+                axes[0].annotate(label, (xval, yval), textcoords="offset points", xytext=(4, 4), fontsize=8, color=GRAY)
+
+        if show_gamma and gamma_values is not None:
+            if gamma_error is None:
+                axes[1].plot(xvalues, gamma_values, linestyle=linestyle, marker=marker, color=color, label=series_label)
+            else:
+                axes[1].errorbar(
+                    xvalues, gamma_values, yerr=gamma_error,
+                    linestyle=linestyle, marker=marker, capsize=2.5,
+                    color=color, ecolor=color, elinewidth=1.0,
+                    markerfacecolor=color, markeredgecolor=color,
+                    label=series_label,
+                )
+            if not multi:
+                for label, xval, yval in zip(labels, xvalues, gamma_values):
+                    axes[1].annotate(label, (xval, yval), textcoords="offset points", xytext=(4, 4), fontsize=8, color=GRAY)
+
     axes[0].set_xscale(args.xscale)
     if args.truerate is not None:
-        axes[0].axhline(args.truerate, linestyle='--', color=BLUE)
+        axes[0].axhline(args.truerate, linestyle="--", color=BLUE)
     apply_xlimits(axes[0], xvalues, args.xscale)
     axes[0].set_ylabel(rate_axis_label("Estimated", unit_abbrev))
-    if ncols == 1:
-        axes[0].set_xlabel(args.xlabel)
-        style_axis(axes[0])
+    if multi:
+        axes[0].legend(loc="best", handlelength=1.5)
 
-    if gamma_values is not None:
-        axes[1].set_ylim((-0.05,1.05))
-        axes[1].axhline(0.0, linestyle='--', color=BLACK)
-        axes[1].axhline(1.0, linestyle='--', color=BLACK)
-        if gamma_error is None:
-            axes[1].plot(xvalues, gamma_values, linestyle=linestyle, marker="o", color=BLUE)
-        else:
-            axes[1].errorbar(
-                xvalues, gamma_values, yerr=gamma_error, linestyle=linestyle, marker="o", capsize=2.5,
-                color=BLUE, ecolor=BLUE, elinewidth=1.0, markerfacecolor=BLUE, markeredgecolor=BLUE
-            )
-        for label, xval, yval in zip(labels, xvalues, gamma_values):
-            axes[1].annotate(label, (xval, yval), textcoords="offset points", xytext=(4, 4), fontsize=8, color=GRAY)
+    if show_gamma:
+        axes[1].set_ylim((-0.05, 1.05))
+        axes[1].axhline(0.0, linestyle="--", color=BLACK)
+        axes[1].axhline(1.0, linestyle="--", color=BLACK)
         axes[1].set_xscale(args.xscale)
         apply_xlimits(axes[1], xvalues, args.xscale)
         axes[1].set_xlabel(args.xlabel)
         axes[1].set_ylabel("Estimated γ")
+        if multi:
+            axes[1].legend(loc="best", handlelength=1.5)
         style_axes(axes)
         add_panel_labels(axes, ["(a)", "(b)"])
         axes[0].tick_params(labelbottom=False)
         fig.subplots_adjust(top=0.96, bottom=0.10, left=0.18, right=0.98, hspace=0.04)
+    else:
+        axes[0].set_xlabel(args.xlabel)
+        style_axis(axes[0])
 
     fig.savefig(args.output, dpi=220)
     plt.close(fig)
 
-    cdf_key = cdf_plot_key_for_method(args.method, payloads)
-    if cdf_key is not None and all(cdf_key in payload for payload in payloads):
-        cdf_output = args.cdf_output if args.cdf_output is not None else default_cdf_output_path(args.output)
-        plot_regular_series_cdfs(payloads, labels, cdf_key, cdf_output, time_unit=args.time_unit)
+    # CDF plot: only when a single method with CDF data is selected
+    if not multi:
+        cdf_key = cdf_plot_key_for_method(methods[0], payloads)
+        if cdf_key is not None and all(cdf_key in payload for payload in payloads):
+            cdf_output = args.cdf_output if args.cdf_output is not None else default_cdf_output_path(args.output)
+            plot_regular_series_cdfs(payloads, labels, cdf_key, cdf_output, time_unit=args.time_unit)
     return 0
 
 

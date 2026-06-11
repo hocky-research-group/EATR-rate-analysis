@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import sys
@@ -71,6 +72,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(payload_microseconds["plot_time_unit"], "microseconds")
             self.assertEqual(payload_seconds["EATR MLE ln k"], payload_microseconds["EATR MLE ln k"])
             self.assertEqual(payload_seconds["EATR MLE gamma"], payload_microseconds["EATR MLE gamma"])
+            self.assertEqual(payload_seconds["ln(k_obs)"], payload_microseconds["ln(k_obs)"])
 
     @unittest.skipUnless(find_spec("numpy") and find_spec("scipy"), "numpy and scipy are required")
     def test_rates_cli_bootstrap_threads_writes_ci_output(self):
@@ -120,6 +122,9 @@ class CliTests(unittest.TestCase):
             self.assertIn("EATR MLE gamma", payload)
             self.assertIn("EATR MLE ln k CI", payload)
             self.assertIn("EATR MLE gamma CI", payload)
+            self.assertIn("ln(k_obs)", payload)
+            self.assertIn("ln(k_obs) avg", payload)
+            self.assertIn("ln(k_obs) std", payload)
             self.assertEqual(payload["plot_time_unit"], "microseconds")
             self.assertIn("EATR MLE CDF plot", payload)
             self.assertEqual(sorted(payload["EATR MLE CDF plot"]), ["ecdf", "fit", "time"])
@@ -160,6 +165,7 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stderr)
             payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertAlmostEqual(payload["ln(k_obs)"], math.log(1.0 / (2.0e-12)))
             self.assertIn("iMetaD MLE ln k", payload)
             self.assertIn("iMetaD MLE KS stat", payload)
 
@@ -367,11 +373,11 @@ class CliTests(unittest.TestCase):
             input1.write_text(
                 json.dumps(
                     {
-                        "EATR MLE ln k": 1.0,
-                        "EATR MLE gamma": 0.2,
-                        "EATR MLE ln k std": 0.1,
-                        "EATR MLE gamma std": 0.02,
-                        "EATR MLE CDF plot": {
+                        "EATR CDF ln k": 1.0,
+                        "EATR CDF gamma": 0.2,
+                        "EATR CDF ln k std": 0.1,
+                        "EATR CDF gamma std": 0.02,
+                        "EATR CDF plot": {
                             "time": [1.0, 2.0, 3.0],
                             "ecdf": [0.5, 0.75, 1.0],
                             "fit": [0.4, 0.7, 0.95],
@@ -383,11 +389,11 @@ class CliTests(unittest.TestCase):
             input2.write_text(
                 json.dumps(
                     {
-                        "EATR MLE ln k": 2.0,
-                        "EATR MLE gamma": 0.4,
-                        "EATR MLE ln k std": 0.2,
-                        "EATR MLE gamma std": 0.03,
-                        "EATR MLE CDF plot": {
+                        "EATR CDF ln k": 2.0,
+                        "EATR CDF gamma": 0.4,
+                        "EATR CDF ln k std": 0.2,
+                        "EATR CDF gamma std": 0.03,
+                        "EATR CDF plot": {
                             "time": [1.5, 2.5, 3.5],
                             "ecdf": [0.4, 0.7, 1.0],
                             "fit": [0.35, 0.68, 0.98],
@@ -410,7 +416,7 @@ class CliTests(unittest.TestCase):
                     "pace 1 ps",
                     "pace 10 ps",
                     "--method",
-                    "eatr-mle",
+                    "eatr-cdf",
                     "--time-unit",
                     "microseconds",
                     "-o",
