@@ -14,6 +14,7 @@ from scipy.stats import ks_1samp
 import ks_censored as ksc
 import rate_methods_library as RM
 from eatr_rates.plot_results import plot_flooding_payload
+from eatr_rates.time_units import TIME_UNIT_CHOICES, resolve_time_unit
 
 
 def thread_map(func, values, threads: int):
@@ -90,6 +91,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--condition-label", type=str, default="Bias label", help="label for the per-set condition values in generated plots")
     parser.add_argument("--condition-unit", type=str, default="", help="unit suffix for the per-set condition values in generated plots")
     parser.add_argument("--title-prefix", type=str, default="Flooding analysis", help="title prefix for the generated diagnostic figure")
+    parser.add_argument("--plot-time-unit", choices=TIME_UNIT_CHOICES, default="seconds", help="display time unit for generated plots and JSON metadata (DEFAULT: seconds)")
     return parser
 
 
@@ -125,8 +127,10 @@ def write_results(path: str, payload: dict[str, object]) -> None:
         json.dump(json_ready(payload), handle)
 
 
-def result_payload(result: FloodingAnalysisResult) -> dict[str, object]:
+def result_payload(result: FloodingAnalysisResult, plot_time_unit: str) -> dict[str, object]:
+    plot_time_unit, _, _ = resolve_time_unit(plot_time_unit)
     return {
+        "plot_time_unit": plot_time_unit,
         "beta": result.beta,
         "logk0": result.logk0,
         "gamma": result.gamma,
@@ -349,7 +353,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     result = analyze(args)
     emit_messages(result, args.quiet)
-    payload = result_payload(result)
+    payload = result_payload(result, args.plot_time_unit)
     write_results(args.output, payload)
     if not args.no_plots:
         prefix = args.plot_prefix if args.plot_prefix is not None else str(Path(args.output).with_suffix(""))
@@ -359,6 +363,7 @@ def main(argv: list[str] | None = None) -> int:
             condition_label=args.condition_label,
             condition_unit=args.condition_unit,
             title_prefix=args.title_prefix,
+            time_unit=args.plot_time_unit,
         )
     return 0
 

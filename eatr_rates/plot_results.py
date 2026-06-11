@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 
 import numpy as np
+from eatr_rates.time_units import TIME_UNIT_CHOICES, resolve_time_unit
 from eatr_rates.plot_style import (
     BLACK,
     BLUE,
@@ -56,6 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
     regular.add_argument("--truerate", type=np.float64, default=None, help="optional true rate to compare to results")
     regular.add_argument("-o", "--output", type=str, default="regular_series.png", help="output figure path")
     regular.add_argument("--cdf-output", type=str, default=None, help="optional output path for the per-pace empirical-vs-fit CDF figure; defaults to a sibling *_cdf file when CDF plot data are present")
+    regular.add_argument("--time-unit", choices=TIME_UNIT_CHOICES, default=None, help="display time/rate units for plot labels and values; defaults to the JSON metadata or seconds")
 
     flooding = subparsers.add_parser("flooding", help="plot figures from one eatr-flooding-analysis JSON output")
     flooding.add_argument("-i", "--input", required=True, help="JSON output from eatr-flooding-analysis")
@@ -63,6 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
     flooding.add_argument("--condition-unit", type=str, default="", help="unit suffix for the per-set condition values")
     flooding.add_argument("--title-prefix", type=str, default="Flooding analysis", help="title prefix for the generated figures")
     flooding.add_argument("-o", "--output-prefix", type=str, default="flooding", help="prefix for generated figure files")
+    flooding.add_argument("--time-unit", choices=TIME_UNIT_CHOICES, default=None, help="display time/rate units for plot labels and values; defaults to the JSON metadata or seconds")
 
     return parser
 
@@ -114,23 +117,52 @@ def apply_xlimits(axis, xvalues: np.ndarray, xscale: str) -> None:
     axis.set_xlim(xmin - pad, xmax + pad)
 
 
+def get_plot_time_unit(payloads: list[dict[str, object]], explicit: str | None) -> tuple[str, str, float]:
+    if explicit is not None:
+        return resolve_time_unit(explicit)
+    values = [payload.get("plot_time_unit") for payload in payloads if payload.get("plot_time_unit") is not None]
+    if values:
+        return resolve_time_unit(str(values[0]))
+    return resolve_time_unit("seconds")
+
+
+def convert_log_rates(log_values: np.ndarray, seconds_per_unit: float) -> np.ndarray:
+    return log_values + np.log(seconds_per_unit)
+
+
+def rate_axis_label(prefix: str, unit_abbrev: str, observed: bool = False) -> str:
+    if observed:
+        return rf"Observed ln($k_{{\mathrm{{obs}}}}$ / {unit_abbrev}$^{{-1}}$)"
+    return rf"{prefix} ln($k_0$ / {unit_abbrev}$^{{-1}}$)"
+
+
+def time_axis_label(unit_abbrev: str) -> str:
+    return f"Transition time ({unit_abbrev})"
+
+
+
+
 def plot_flooding_payload(
     payload: dict[str, object],
     output_prefix: str,
     condition_label: str = "Bias label",
     condition_unit: str = "",
     title_prefix: str = "Flooding analysis",
+    time_unit: str | None = None,
 ) -> list[str]:
     reports = payload["set_reports"]
     if not reports:
         raise SystemExit("The flooding JSON did not contain any set reports.")
 
+    _, unit_abbrev, seconds_per_unit = get_plot_time_unit([payload], time_unit)
     unit_suffix = f" ({condition_unit})" if condition_unit else ""
     condition_values = np.array([float(report["barrier"]) for report in reports], dtype=float)
-    log_kobs = np.array([float(report["log_k_obs"]) for report in reports], dtype=float)
+    log_kobs_seconds = np.array([float(report["log_k_obs"]) for report in reports], dtype=float)
+    log_kobs = convert_log_rates(log_kobs_seconds, seconds_per_unit)
     ln_acceleration = np.array([float(report["ln_exp_beta_v"]) for report in reports], dtype=float)
     gamma = float(payload["gamma"])
     logk0 = float(payload["logk0"])
+    display_logk0 = float(logk0 + np.log(seconds_per_unit))
 
     prefix = Path(output_prefix)
     prefix.parent.mkdir(parents=True, exist_ok=True)
@@ -143,7 +175,7 @@ def plot_flooding_payload(
     for report, xval, yval in zip(reports, condition_values, log_kobs):
         ax.annotate(str(report["barrier"]), (xval, yval), textcoords="offset points", xytext=(4, 4), fontsize=8, color=GRAY)
     ax.set_xlabel(f"{condition_label}{unit_suffix}")
-    ax.set_ylabel(r"Observed ln($k_{\mathrm{obs}}$ / s$^{-1}$)")
+    ax.set_ylabel(rate_axis_label("Observed", unit_abbrev, observed=True))
     style_axis(ax)
     fig.savefig(observed_path, dpi=220)
     plt.close(fig)
@@ -151,7 +183,7 @@ def plot_flooding_payload(
 
     acceleration_path = f"{prefix}_ln_kobs_vs_acceleration.png"
     xfit = np.linspace(float(np.min(ln_acceleration)) * 0.98, float(np.max(ln_acceleration)) * 1.02, 200)
-    yfit = logk0 + gamma * xfit
+    yfit = display_logk0 + gamma * xfit
     fig, ax = plt.subplots(figsize=(3.35, 2.23), constrained_layout=True)
     ax.plot(ln_acceleration, log_kobs, marker="o", linestyle="none", label="Simulation sets", color=BLUE)
     ax.plot(xfit, yfit, color=BLACK, label=fr"fit: ln($k_{{obs}}$) = ln($k_0$) + $\gamma$ ln($\alpha$)")
@@ -160,7 +192,7 @@ def plot_flooding_payload(
     ax.text(
         0.03,
         0.97,
-        f"slope (gamma) = {gamma:.3f}\nintercept ln(k0 / s^-1) = {logk0:.3f}",
+        f"slope (gamma) = {gamma:.3f}\nintercept ln(k0 / {unit_abbrev}^-1) = {display_logk0:.3f}",
         transform=ax.transAxes,
         va="top",
         ha="left",
@@ -168,7 +200,7 @@ def plot_flooding_payload(
         bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.9, "edgecolor": GRAY, "linewidth": 0.6},
     )
     ax.set_xlabel(r"ln acceleration factor, ln($\alpha$)")
-    ax.set_ylabel(r"ln($k_{\mathrm{obs}}$ / s$^{-1}$)")
+    ax.set_ylabel(rate_axis_label("", unit_abbrev, observed=True).replace("Observed ", ""))
     style_axis(ax)
     ax.legend(loc="lower right", handlelength=1.5)
     fig.savefig(acceleration_path, dpi=220)
@@ -187,17 +219,20 @@ def plot_flooding_payload(
         set_labels = [str(report["barrier"]) for report in reports]
 
         fig, axes = plt.subplots(3, 1, figsize=(3.35, 6.85), sharex=True, gridspec_kw={"hspace": 0.04})
+        display_per_set = per_set + np.log(seconds_per_unit)
         for idx, label in enumerate(set_labels):
-            axes[0].plot(gamma_grid, per_set[:, idx], label=label, color=SET_COLORS[idx % len(SET_COLORS)])
-        axes[0].set_ylabel(r"Predicted ln($k_0$ / s$^{-1}$)")
+            axes[0].plot(gamma_grid, display_per_set[:, idx], label=label, color=SET_COLORS[idx % len(SET_COLORS)])
+        axes[0].set_ylabel(rate_axis_label("Predicted", unit_abbrev))
         axes[0].legend(loc="lower left", ncol=2, handlelength=1.4, columnspacing=0.8)
 
         std_ln_k0 = np.sqrt(var_ln_k0)
-        axes[1].plot(gamma_grid, mean_ln_k0, color=BLUE)
-        axes[1].fill_between(gamma_grid, mean_ln_k0 - std_ln_k0, mean_ln_k0 + std_ln_k0, color=LIGHT_BLUE, alpha=0.9)
+        display_mean_ln_k0 = mean_ln_k0 + np.log(seconds_per_unit)
+        display_logk0_best = logk0_best + np.log(seconds_per_unit)
+        axes[1].plot(gamma_grid, display_mean_ln_k0, color=BLUE)
+        axes[1].fill_between(gamma_grid, display_mean_ln_k0 - std_ln_k0, display_mean_ln_k0 + std_ln_k0, color=LIGHT_BLUE, alpha=0.9)
         axes[1].axvline(gamma_best, color=BLACK, linestyle="--", label=fr"min-var. $\gamma$ = {gamma_best:.2f}")
-        axes[1].axhline(logk0_best, color=BLUE, linestyle="--", label=fr"mean ln($k_0$) = {logk0_best:.2f}")
-        axes[1].set_ylabel(r"Mean ln($k_0$ / s$^{-1}$)")
+        axes[1].axhline(display_logk0_best, color=BLUE, linestyle="--", label=fr"mean ln($k_0$) = {display_logk0_best:.2f}")
+        axes[1].set_ylabel(rate_axis_label("Mean", unit_abbrev))
         axes[1].legend(loc="lower left", handlelength=1.5)
 
         axes[2].plot(gamma_grid, var_ln_k0, color=BLACK)
@@ -236,7 +271,8 @@ def default_cdf_output_path(path: str) -> str:
     return str(output_path.with_name(f"{output_path.stem}_cdf{output_path.suffix}"))
 
 
-def plot_regular_series_cdfs(payloads, labels, key: str, output: str) -> None:
+def plot_regular_series_cdfs(payloads, labels, key: str, output: str, time_unit: str | None = None) -> None:
+    _, unit_abbrev, seconds_per_unit = get_plot_time_unit(payloads, time_unit)
     plt = pyplot()
     fig, ax = plt.subplots(figsize=(3.35, 2.23), constrained_layout=True)
     colors = [SET_COLORS[idx % len(SET_COLORS)] for idx in range(len(payloads))]
@@ -248,14 +284,15 @@ def plot_regular_series_cdfs(payloads, labels, key: str, output: str) -> None:
         fit = np.array(plot_payload["fit"], dtype=float)
         if np.any(times <= 0.0):
             raise SystemExit("CDF plots require strictly positive transition times for log-scaled x-axis output.")
-        positive_times.append(times)
-        ax.plot(times, fit, color=color, linewidth=1.4, label=label)
-        ax.plot(times, ecdf, linestyle="none", marker="o", markersize=3.2, color=color)
+        display_times = times / seconds_per_unit
+        positive_times.append(display_times)
+        ax.plot(display_times, fit, color=color, linewidth=1.4, label=label)
+        ax.plot(display_times, ecdf, linestyle="none", marker="o", markersize=3.2, color=color)
     ax.text(0.03, 0.97, "points: empirical CDF\nlines: EATR fit", transform=ax.transAxes, va="top", ha="left", fontsize=8.5)
     ax.set_xscale("log")
     if positive_times:
         apply_xlimits(ax, np.concatenate(positive_times), "log")
-    ax.set_xlabel("Transition time (s)")
+    ax.set_xlabel(time_axis_label(unit_abbrev))
     ax.set_ylabel("CDF")
     ax.set_ylim(-0.02, 1.02)
     style_axis(ax)
@@ -271,16 +308,17 @@ def plot_regular_series(args: argparse.Namespace) -> int:
         raise SystemExit("If provided, --labels must match the number of --input files.")
 
     payloads = [load_json(path) for path in args.input]
+    _, unit_abbrev, seconds_per_unit = get_plot_time_unit(payloads, args.time_unit)
     xvalues = autodetect_xvalues(args.input) if args.xvalues is None else np.array(args.xvalues, dtype=float)
     labels = args.labels if args.labels is not None else [Path(path).stem for path in args.input]
     linestyle = '' if args.noline else '-'
 
     if args.method == "eatr-comparison":
-        return plot_eatr_comparison(payloads, xvalues, labels, args.xlabel, args.xscale, args.output)
+        return plot_eatr_comparison(payloads, xvalues, labels, args.xlabel, args.xscale, args.output, time_unit=args.time_unit)
 
     log_key, gamma_key = METHOD_KEYS[args.method]
 
-    log_values = np.array([float(payload[log_key]) for payload in payloads], dtype=float)
+    log_values = convert_log_rates(np.array([float(payload[log_key]) for payload in payloads], dtype=float), seconds_per_unit)
     log_error = None
     if any(f"{log_key} std" in payload or f"{log_key} CI" in payload for payload in payloads):
         lower = []
@@ -333,7 +371,7 @@ def plot_regular_series(args: argparse.Namespace) -> int:
     if args.truerate is not None:
         axes[0].axhline(args.truerate, linestyle='--', color=BLUE)
     apply_xlimits(axes[0], xvalues, args.xscale)
-    axes[0].set_ylabel(r"Estimated ln($k_0$ / s$^{-1}$)")
+    axes[0].set_ylabel(rate_axis_label("Estimated", unit_abbrev))
     if ncols == 1:
         axes[0].set_xlabel(args.xlabel)
         style_axis(axes[0])
@@ -366,16 +404,17 @@ def plot_regular_series(args: argparse.Namespace) -> int:
     cdf_key = cdf_plot_key_for_method(args.method, payloads)
     if cdf_key is not None and all(cdf_key in payload for payload in payloads):
         cdf_output = args.cdf_output if args.cdf_output is not None else default_cdf_output_path(args.output)
-        plot_regular_series_cdfs(payloads, labels, cdf_key, cdf_output)
+        plot_regular_series_cdfs(payloads, labels, cdf_key, cdf_output, time_unit=args.time_unit)
     return 0
 
 
-def plot_eatr_comparison(payloads, xvalues, labels, xlabel: str, xscale: str, output: str) -> int:
+def plot_eatr_comparison(payloads, xvalues, labels, xlabel: str, xscale: str, output: str, time_unit: str | None = None) -> int:
+    _, unit_abbrev, seconds_per_unit = get_plot_time_unit(payloads, time_unit)
     plt = pyplot()
 
-    mle_ln_k = np.array([float(payload["EATR MLE ln k"]) for payload in payloads], dtype=float)
+    mle_ln_k = convert_log_rates(np.array([float(payload["EATR MLE ln k"]) for payload in payloads], dtype=float), seconds_per_unit)
     mle_gamma = np.array([float(payload["EATR MLE gamma"]) for payload in payloads], dtype=float)
-    cdf_ln_k = np.array([float(payload["EATR CDF ln k"]) if "EATR CDF ln k" in payload else np.nan for payload in payloads], dtype=float)
+    cdf_ln_k = convert_log_rates(np.array([float(payload["EATR CDF ln k"]) if "EATR CDF ln k" in payload else np.nan for payload in payloads], dtype=float), seconds_per_unit)
     cdf_gamma = np.array([float(payload["EATR CDF gamma"]) if "EATR CDF gamma" in payload else np.nan for payload in payloads], dtype=float)
 
     mle_ln_k_err = np.array([float(payload.get("EATR MLE ln k std", 0.0)) for payload in payloads], dtype=float)
@@ -389,7 +428,7 @@ def plot_eatr_comparison(payloads, xvalues, labels, xlabel: str, xscale: str, ou
     axes[0].plot(xvalues, cdf_ln_k, marker="s", color=ORANGE, label="EATR CDF")
     axes[0].set_xscale(xscale)
     apply_xlimits(axes[0], xvalues, xscale)
-    axes[0].set_ylabel(r"Estimated ln($k_0$ / s$^{-1}$)")
+    axes[0].set_ylabel(rate_axis_label("Estimated", unit_abbrev))
     axes[0].legend(loc="best", handlelength=1.5)
     for label, xval, yval in zip(labels, xvalues, mle_ln_k):
         axes[0].annotate(label, (xval, yval), textcoords="offset points", xytext=(4, 4), fontsize=8, color=GRAY)
@@ -424,6 +463,7 @@ def plot_flooding(args: argparse.Namespace) -> int:
         condition_label=args.condition_label,
         condition_unit=args.condition_unit,
         title_prefix=args.title_prefix,
+        time_unit=args.time_unit,
     )
     return 0
 

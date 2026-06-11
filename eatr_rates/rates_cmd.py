@@ -11,6 +11,7 @@ from scipy.stats import gamma as gamma_func
 from scipy.stats import ks_1samp, ks_2samp
 
 import rate_methods_library as RM
+from eatr_rates.time_units import TIME_UNIT_CHOICES, resolve_time_unit
 
 bopt_avail = False
 try:
@@ -133,6 +134,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-B", "--bayesopt", action="store_true", help="use Bayseian Optimization algorithm for optimizing if available")
     parser.add_argument("-l", "--logtrick", action="store_true", help="use log-sum-exp trick to potentially increase precision (generally unneeded)")
     parser.add_argument("-q", "--quiet", action="store_true", help="do not print the results to the terminal as they are calculated")
+    parser.add_argument("--plot-time-unit", choices=TIME_UNIT_CHOICES, default="seconds", help="preferred time unit for downstream plotting metadata (DEFAULT: seconds)")
     return parser
 
 
@@ -274,7 +276,9 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
 
     beta = parse_beta(args)
     validate_args(args)
+    plot_time_unit, _, _ = resolve_time_unit(args.plot_time_unit)
     run = AnalysisResult(beta=beta, data=[], event=np.array([]))
+    run.results["plot_time_unit"] = plot_time_unit
 
     gamma_bounds = (args.gammamin, args.gammamax)
     k_bounds = (np.exp(args.lnkmin), np.exp(args.lnkmax))

@@ -47,6 +47,8 @@ class CliTests(unittest.TestCase):
                     "6",
                     "--threads",
                     "2",
+                    "--plot-time-unit",
+                    "microseconds",
                     "-q",
                     "-o",
                     str(output),
@@ -64,6 +66,7 @@ class CliTests(unittest.TestCase):
             self.assertIn("EATR MLE gamma", payload)
             self.assertIn("EATR MLE ln k CI", payload)
             self.assertIn("EATR MLE gamma CI", payload)
+            self.assertEqual(payload["plot_time_unit"], "microseconds")
             self.assertIn("EATR MLE CDF plot", payload)
             self.assertEqual(sorted(payload["EATR MLE CDF plot"]), ["ecdf", "fit", "time"])
             self.assertEqual(len(payload["EATR MLE CDF plot"]["time"]), len(payload["EATR MLE CDF plot"]["ecdf"]))
@@ -202,6 +205,8 @@ class CliTests(unittest.TestCase):
                     "6",
                     "--threads",
                     "2",
+                    "--plot-time-unit",
+                    "hours",
                     "-q",
                     "-o",
                     str(output),
@@ -215,6 +220,7 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stderr)
             payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["plot_time_unit"], "hours")
             self.assertIn("bootstrap_logk0_std", payload)
             self.assertIn("bootstrap_gamma_std", payload)
             self.assertEqual(len(payload["bootstrap_iterations"]), 6)
@@ -271,6 +277,8 @@ class CliTests(unittest.TestCase):
                     "0",
                     "--vcol",
                     "2",
+                    "--plot-time-unit",
+                    "microseconds",
                     "-q",
                     "-o",
                     str(output),
@@ -349,6 +357,8 @@ class CliTests(unittest.TestCase):
                     "pace 10 ps",
                     "--method",
                     "eatr-mle",
+                    "--time-unit",
+                    "microseconds",
                     "-o",
                     str(output),
                 ],
