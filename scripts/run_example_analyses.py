@@ -17,7 +17,7 @@ OUTPUT_ROOT = ROOT / "example-data" / "test_results"
 MPL_CONFIG_DIR = ROOT / ".matplotlib-cache"
 XDG_CACHE_DIR = ROOT / ".cache"
 
-TIMEUNIT_SECONDS = 1e-15
+TIMEUNIT_SECONDS = 1e-12
 MICROSECONDS_PER_SECOND = 1e6
 TIMEUNIT_MICROSECONDS = TIMEUNIT_SECONDS * MICROSECONDS_PER_SECOND
 TEMPERATURE_K = 312.0
@@ -428,7 +428,7 @@ def bootstrap_flooding(set_specs: list[dict[str, object]], n_resamples: int, rng
     }
 
 
-def save_flooding_plot(title: str, diagnostics: dict[str, object], set_labels: list[str], output_name: str, bootstrap_stats: dict[str, object] | None = None, reference_lines: dict[str, float] | None = None) -> None:
+def save_flooding_plot(title: str, diagnostics: dict[str, object], set_labels: list[str], output_name: str, bootstrap_stats: dict[str, object] | None = None, reference_lines: dict[str, float] | None = None, truerate: float | None = None) -> None:
     plt = pyplot()
     gamma_grid = np.array(diagnostics["gamma_grid"], dtype=float)
     per_set = np.array(diagnostics["per_set_ln_k0"], dtype=float)
@@ -454,6 +454,8 @@ def save_flooding_plot(title: str, diagnostics: dict[str, object], set_labels: l
     if reference_lines:
         for name, value in reference_lines.items():
             axes[1].axhline(value, linestyle=":", label=f"{name}={value:.3f}")
+    if truerate is not None:
+        axes[1].axhline(truerate, linestyle=":", color="black", label=f"reference ln(k0)={truerate:.3f}")
     axes[1].set_xlabel("γ")
     axes[1].set_ylabel(r"Mean ln($k_0$ / us$^{-1}$)")
     axes[1].set_title(f"{title}: mean ± std")
@@ -599,7 +601,7 @@ def run_opes_flooding() -> dict[str, object]:
     }
     with open(OUTPUT_ROOT / "opes_flooding_summary.json", "w", encoding="utf-8") as handle:
         json.dump(output, handle, indent=2)
-    save_flooding_plot("OPES EATR-flooding", diagnostics, labels, "opes_flooding_diagnostics.png", bootstrap_stats=bootstrap_stats)
+    save_flooding_plot("OPES EATR-flooding", diagnostics, labels, "opes_flooding_diagnostics.png", bootstrap_stats=bootstrap_stats, truerate=0.35967608559103206)
     plot_opes_observed_rate_vs_barrier(set_specs, bootstrap_stats)
     plot_opes_ln_kobs_vs_acceleration(set_specs, diagnostics, bootstrap_stats)
     return output
@@ -675,8 +677,8 @@ def run_wt_flooding() -> dict[str, object]:
     }
     with open(OUTPUT_ROOT / "wt_flooding_summary.json", "w", encoding="utf-8") as handle:
         json.dump(output, handle, indent=2)
-    save_flooding_plot("WT-MetaD EATR-flooding (all paces)", diagnostics_all, labels, "wt_flooding_all_paces.png", bootstrap_stats=bootstrap_all)
-    save_flooding_plot("WT-MetaD EATR-flooding (pace ≥ 100 ps)", diagnostics_filtered, filtered_labels, "wt_flooding_filtered_paces.png", bootstrap_stats=bootstrap_filtered)
+    save_flooding_plot("WT-MetaD EATR-flooding (all paces)", diagnostics_all, labels, "wt_flooding_all_paces.png", bootstrap_stats=bootstrap_all, truerate=0.35967608559103206)
+    save_flooding_plot("WT-MetaD EATR-flooding (pace ≥ 100 ps)", diagnostics_filtered, filtered_labels, "wt_flooding_filtered_paces.png", bootstrap_stats=bootstrap_filtered, truerate=0.35967608559103206)
     plot_wt_observed_rate_vs_pace(set_specs, diagnostics_filtered, bootstrap_all)
     plot_wt_ln_kobs_vs_acceleration(set_specs, diagnostics_all, bootstrap_all)
     return output
@@ -721,7 +723,7 @@ def main() -> None:
     manifest = {
         "generated_files": sorted(path.name for path in OUTPUT_ROOT.iterdir()),
         "notes": [
-            "Protein G example trajectories use a 10 fs timestep in LAMMPS real units, so times were converted with 1e-15 s/fs.",
+            "Protein G Ree example trajectories are written in PLUMED picoseconds, so times were converted with 1e-12 s/ps.",
             "Reported rate constants and observed rates in these example outputs are converted to us^-1.",
             "WT flooding analysis is reported for all pace sets and for a manuscript-style filtered subset with pace >= 100 ps.",
             f"Bootstrap uncertainties use {BOOTSTRAP_RESAMPLES} trajectory-resampling replicas per analysis.",

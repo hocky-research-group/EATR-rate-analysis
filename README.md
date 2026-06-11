@@ -184,6 +184,15 @@ Important arguments:
   Prefix for the generated flooding figures. By default this is derived from `--output`, so `-o opes_flooding.json` writes `opes_flooding_observed_rate.png`, `opes_flooding_ln_kobs_vs_acceleration.png`, and `opes_flooding_diagnostics.png`.
 - `--condition-label`, `--condition-unit`, `--title-prefix`
   Labels used in the generated flooding figures.
+- `--nsets`
+  Fix the number of sets used for the final fit. By default the code
+  automatically selects a subset using a convergence-based heuristic (fitting
+  n = 3 … N sets in order of ascending acceleration factor and choosing the
+  n that minimises the change in the estimated `k0`). Pass `--nsets N` to
+  override that automatic selection and always include all N sets.
+- `--truerate`
+  Reference ln(k0) value in the display time unit. When provided, this value
+  is drawn as a reference line on the acceleration and diagnostics plots.
 - `--no-plots`
   Disable the automatic figure generation if you only want the JSON output.
 
@@ -215,8 +224,11 @@ eatr-analysis-plot regular-series \
   --xvalues 1 10 100 \
   --xlabel "MetaD hill deposition pace (ps)" \
   --method eatr-cdf imetad-cdf \
+  --truerate 1.23 \
   -o wt_regular_series.png
 ```
+
+`--truerate` draws a reference horizontal line at the known ln(k0) value (in the display time unit) for comparison.
 
 Flooding example:
 
@@ -226,6 +238,7 @@ eatr-analysis-plot flooding \
   --condition-label "OPES barrier" \
   --condition-unit "kJ mol^-1" \
   --title-prefix "OPES flooding" \
+  --truerate 1.23 \
   -o opes_figures
 ```
 

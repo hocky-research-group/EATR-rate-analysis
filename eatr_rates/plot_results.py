@@ -435,8 +435,8 @@ def plot_regular_series(args: argparse.Namespace) -> int:
         return plot_eatr_comparison(payloads, xvalues, labels, args.xlabel, args.xscale, args.output, time_unit=args.time_unit)
 
     multi = len(methods) > 1
-    # Show gamma panel only when every selected method has a gamma key
-    show_gamma = all(METHOD_KEYS[m][1] is not None for m in methods)
+    # Show gamma panel when at least one selected method has a gamma key
+    show_gamma = any(METHOD_KEYS[m][1] is not None for m in methods)
 
     plt = pyplot()
     if show_gamma:

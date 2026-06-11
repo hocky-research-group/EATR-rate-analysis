@@ -58,6 +58,7 @@ exit
   --labels 1e2 1e3 1e4 2e4 5e4 1e5 5e5 1e6 \
   --xlabel "MetaD hill deposition pace (ps)" \
   --method eatr-cdf imetad-cdf \
+  --truerate 0.35967608559103206 \
   -o "${OUT_DIR}/wt_regular_series.png"
 
 "${VENV_BIN}/eatr-flooding-analysis" \
@@ -77,6 +78,7 @@ exit
   --vcol 4 \
   --bootstrap --numboots "${NUMBOOTS}" \
   --threads "${THREADS}" \
+  --truerate 0.35967608559103206 \
   -q \
   -o "${OUT_DIR}/opes_flooding.json"
 
@@ -85,6 +87,7 @@ exit
   --condition-label "OPES barrier" \
   --condition-unit "kJ mol^-1" \
   --title-prefix "OPES flooding CLI" \
+  --truerate 0.35967608559103206 \
   -o "${OUT_DIR}/opes_cli"
 
 "${VENV_BIN}/eatr-flooding-analysis" \
@@ -112,6 +115,7 @@ exit
   --nooffset \
   --bootstrap --numboots "${NUMBOOTS}" \
   --threads "${THREADS}" \
+  --truerate 0.35967608559103206 \
   -q \
   -o "${OUT_DIR}/wt_flooding.json"
 
@@ -120,4 +124,5 @@ exit
   --condition-label "MetaD pace" \
   --condition-unit "ps" \
   --title-prefix "WT flooding CLI" \
+  --truerate 0.35967608559103206 \
   -o "${OUT_DIR}/wt_cli"
