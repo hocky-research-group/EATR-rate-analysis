@@ -352,6 +352,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
     run.results["ln(k_obs)"] = observed_log_rate(data, event)
 
     if args.bootstrap:
+        run.results["numboots"] = args.numboots
         observed_log_rate_sample = threaded_bootstrap(
             data,
             ObsLogRateConfig(),

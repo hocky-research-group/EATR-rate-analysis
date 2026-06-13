@@ -535,6 +535,8 @@ def main(argv: list[str] | None = None) -> int:
     result = analyze(args)
     emit_messages(result, args.quiet)
     payload = result_payload(result, args.plot_time_unit)
+    if args.bootstrap:
+        payload["numboots"] = args.numboots
     write_results(args.output, payload)
     if not args.no_plots:
         prefix = args.plot_prefix if args.plot_prefix is not None else str(Path(args.output).with_suffix(""))
