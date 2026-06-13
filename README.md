@@ -84,10 +84,22 @@ Typical usage:
 eatr-analysis -i run_*/*.colvar --temp 310 -E
 ```
 
+Or with Python-side glob expansion (useful for very large file sets):
+
+```bash
+eatr-analysis -g 'run_*/*.colvar' --temp 310 -E
+```
+
 Important arguments:
 
 - `-i`, `--input`
-  Input COLVAR files.
+  Input COLVAR files. The shell expands any glob patterns before they reach
+  the program, which can hit `ARG_MAX` with very large file sets.
+- `-g`, `--input-glob`
+  One or more **quoted** glob patterns expanded by Python rather than the
+  shell (e.g. `-g 'run_*/metad.colvar'`). Useful when the expanded list
+  would exceed shell limits. Equivalent to `-i` otherwise; both flags may
+  be combined.
 - `-o`, `--output`
   Output JSON file. Default: `rates.json`.
 - `--temp`, `--kt`, `--beta`
@@ -104,6 +116,9 @@ Important arguments:
   Max-bias column index if present.
 - `--logfiles`, `--maxlen`, `--maxtime`, `--numevents`
   Ways to determine which runs actually transitioned. Use exactly one when not all trajectories transition.
+- `--logfiles-glob`
+  Quoted glob patterns for PLUMED log files, expanded by Python. Alternative
+  to `--logfiles` for very long file lists.
 - `--threads`
   Number of parallel workers. When `--bootstrap` is set, runs bootstrap resamples concurrently using threads. Otherwise, used as the multiprocessing core count for inner CDF computations.
 - `-m`/`-M`, `-k`/`-K`, `-e`/`-E`
@@ -154,7 +169,14 @@ eatr-flooding-analysis \
 Important arguments:
 
 - `-i`, `--input`
-  Supply one group of trajectory files per simulation set.
+  Supply one group of trajectory files per simulation set. Call once per
+  set. The shell expands any glob patterns, which can hit `ARG_MAX` with
+  very large file sets.
+- `--input-glob`
+  One or more **quoted** glob patterns for one simulation set, expanded by
+  Python (e.g. `--input-glob 'set1/*/run_*.colvar'`). Call once per set,
+  just like `-i`. Both flags may be combined and are processed in the order
+  they are encountered.
 - `--barrier` or `--barriers`
   Bias-strength labels for each set. For OPES, this should usually be the PLUMED `BARRIER` value.
 - `--timeunit`, `--energyunit`, `--temp`, `--kt`, `--beta`
@@ -164,7 +186,11 @@ Important arguments:
 - `--threads`
   Run independent set/bootstrap work in parallel.
 - `--logfiles`, `--maxlen`, `--maxtime`, `--numevents`
-  Set-wise transition detection.
+  Set-wise transition detection. Call `--logfiles` once per set.
+- `--logfiles-glob`
+  Quoted glob patterns for logfiles of one simulation set, expanded by
+  Python. Call once per set. Alternative to `--logfiles` for very long
+  file lists.
 - `-b`, `--bootstrap`, `--numboots`
   Enable bootstrap uncertainty analysis. `--numboots` sets the number of
   resamples (default: 100).
@@ -368,6 +394,30 @@ eatr-flooding-analysis \
   --opesf
 ```
 
+When the expanded file lists would be very long (hundreds of files), use
+`--input-glob` and `--logfiles-glob` with **quoted** patterns so that
+Python does the expansion instead of the shell:
+
+```bash
+OPES=example-data/Ree_Data/E_end_end_distance_opes
+eatr-flooding-analysis \
+  --input-glob "${OPES}/eruns_barr5/run_*/opes_short.colvar"  --barrier 5 \
+  --input-glob "${OPES}/eruns_barr7/run_*/opes_short.colvar"  --barrier 7 \
+  --input-glob "${OPES}/eruns_barr9/run_*/opes_short.colvar"  --barrier 9 \
+  --input-glob "${OPES}/eruns_barr11/run_*/opes_short.colvar" --barrier 11 \
+  --input-glob "${OPES}/eruns_barr13/run_*/opes_short.colvar" --barrier 13 \
+  --logfiles-glob "${OPES}/eruns_barr5/run_*/p.log" \
+  --logfiles-glob "${OPES}/eruns_barr7/run_*/p.log" \
+  --logfiles-glob "${OPES}/eruns_barr9/run_*/p.log" \
+  --logfiles-glob "${OPES}/eruns_barr11/run_*/p.log" \
+  --logfiles-glob "${OPES}/eruns_barr13/run_*/p.log" \
+  --temp 312 \
+  --timeunit 1e-12 \
+  --tcol 0 \
+  --vcol 4 \
+  --opesf
+```
+
 Why these columns:
 
 - in `opes_short.colvar`, column 0 is time
@@ -408,6 +458,17 @@ bash scripts/run_example_cli.sh
 
 That script writes JSON and figure outputs under [example-data/test_results_cli](example-data/test_results_cli).
 For the WT pace ladder it uses EATR CDF (`-E`), and for the flooding workflows it enables bootstrap uncertainty analysis. By default it uses 50 bootstrap replicas where bootstrap is enabled; for a faster smoke run you can lower that with `EATR_NUMBOOTS`, for example `EATR_NUMBOOTS=5 bash scripts/run_example_cli.sh`.
+
+An alternative version of the same workflow uses Python-side glob expansion
+(`--input-glob`, `-g`, `--logfiles-glob`) instead of shell expansion.
+This is useful when the number of files is large enough to approach shell
+`ARG_MAX` limits:
+
+```bash
+bash scripts/run_example_cli_glob.sh
+```
+
+That script writes to [example-data/test_results_cli_glob](example-data/test_results_cli_glob) and is otherwise identical.
 
 For comparison, the repository also includes the Python example runner:
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import random
 from concurrent.futures import ThreadPoolExecutor
@@ -100,12 +101,24 @@ class FloodingAnalysisResult:
     messages: list[str] = field(default_factory=list)
 
 
+def _expand_globs(patterns: list[str]) -> list[str]:
+    """Expand a list of glob patterns to a sorted list of file paths (Python-side expansion)."""
+    result = []
+    for pattern in patterns:
+        matches = sorted(glob.glob(pattern, recursive=True))
+        if not matches:
+            raise SystemExit(f"No files matched glob pattern: {pattern!r}")
+        result.extend(matches)
+    return result
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     barr = parser.add_mutually_exclusive_group()
     temperature = parser.add_mutually_exclusive_group()
     event_find = parser.add_mutually_exclusive_group()
     parser.add_argument("-i", "--input", type=str, action="append", help="the files for a simulation set (call once for each set, i.e. -i path/to/1/*.colvar -i path/to/2/*.colvar etc.)", nargs="+")
+    parser.add_argument("--input-glob", type=str, action="append", dest="input_glob", nargs="+", help="glob patterns for one simulation set, expanded by Python (call once per set; quote to prevent shell expansion, e.g. --input-glob 'path/to/set1/*/run_*.colvar')")
     parser.add_argument("-o", "--output", type=str, default="flooding_rates.json", help="the name of the output JSON file (DEFAULT: flooding_rates.json)")
     barr.add_argument("--barrier", type=np.float64, action="append", help="the BARRIER parameter in PLUMED for the simulation set (i.e. -i path/to/1/*.colvar --barrier 1 -i path/to/2/*.colvar --barrier 2 etc.)")
     barr.add_argument("--barriers", type=np.float64, help="the BARRIER parameter in PLUMED for each simulation set, defined all at once (i.e. -i path/to/1/*.colvar -i path/to/2/*.colvar etc. --barriers 1 2 etc.)", nargs="+")
@@ -127,6 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
     event_find.add_argument("--maxtime", type=np.float64, default=None, help="the maximum time that can appear in each COLVAR file (try to make it slightly less for floating point reasons)")
     event_find.add_argument("--numevents", type=int, default=None, action="append", help="the number of simulations that transitioned for each simulation set (i.e. -i path/to/1/*.colvar --numevents 20 -i path/to/2/*.colvar --numevents 18 etc.)")
     event_find.add_argument("--logfiles", type=str, default=None, action="append", help="the name of the file that contains the PLUMED log for each simulation in each set (i.e. -i path/to/1/*.colvar --logfiles path/to/1/*.log -i path/to/2/*.colvar --logfiles path/to/2/*.log etc.). Use check_order.py to make sure that the correct COLVAR files are paired with the correct log files.", nargs="+")
+    parser.add_argument("--logfiles-glob", type=str, default=None, action="append", dest="logfiles_glob", nargs="+", help="glob patterns for logfiles of one simulation set, expanded by Python (call once per set; alternative to --logfiles; quote to prevent shell expansion)")
     parser.add_argument("-b", "--bootstrap", action="store_true", help="calculate errorbars with bootstrap analysis")
     parser.add_argument("--numboots", type=int, default=100, help="the number of bootstrap samples to use in bootsrapping if enabled")
     parser.add_argument("-q", "--quiet", action="store_true", help="do not print the results to the terminal as they are calculated")
@@ -238,6 +252,11 @@ def format_flooding_result(result: FloodingAnalysisResult) -> list[str]:
 def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
     beta = parse_beta(args)
     random.seed(args.seed)
+
+    if args.input_glob:
+        args.input = (args.input or []) + [_expand_globs(pats) for pats in args.input_glob]
+    if args.logfiles_glob:
+        args.logfiles = (args.logfiles or []) + [_expand_globs(pats) for pats in args.logfiles_glob]
 
     barriers = args.barriers if args.barriers is not None else args.barrier
     if args.input is None or len(args.input) < 2:

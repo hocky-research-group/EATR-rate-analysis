@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import random
 from concurrent.futures import ThreadPoolExecutor
@@ -40,6 +41,17 @@ class AnalysisResult:
     messages: list[str] = field(default_factory=list)
 
 
+def _expand_globs(patterns: list[str]) -> list[str]:
+    """Expand a list of glob patterns to a sorted list of file paths (Python-side expansion)."""
+    result = []
+    for pattern in patterns:
+        matches = sorted(glob.glob(pattern, recursive=True))
+        if not matches:
+            raise SystemExit(f"No files matched glob pattern: {pattern!r}")
+        result.extend(matches)
+    return result
+
+
 def thread_map(func, values, threads: int):
     if threads <= 1:
         return [func(value) for value in values]
@@ -52,6 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     temperature = parser.add_mutually_exclusive_group()
     event_find = parser.add_mutually_exclusive_group()
     parser.add_argument("-i", "--input", type=str, help="the simulation COLVAR files to analyze", nargs="+")
+    parser.add_argument("-g", "--input-glob", type=str, dest="input_glob", nargs="+", help="glob patterns for input COLVAR files, expanded by Python (quote to prevent shell expansion, e.g. -g 'path/to/*/run_*.colvar')")
     parser.add_argument(
         "-o",
         "--output",
@@ -120,6 +133,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="the files that contains the PLUMED logs. Use check_order.py to make sure that the correct COLVAR files are paired with the correct log files (DEFAULT: Do not use this to determine which simulations transitioned.)",
         nargs="+",
+    )
+    parser.add_argument(
+        "--logfiles-glob",
+        type=str,
+        dest="logfiles_glob",
+        default=None,
+        nargs="+",
+        help="glob patterns for PLUMED log files, expanded by Python (alternative to --logfiles; quote to prevent shell expansion)",
     )
     parser.add_argument("-m", "--imetadmle", action="store_true", help="run the Tiwary rate estimator for infrequent metadynamics")
     parser.add_argument("-M", "--imetadcdf", action="store_true", help="run the Salvalaglio rate estimator for infrequent metadynamics")
@@ -314,8 +335,13 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
     random.seed(seed)
     seed = seed if seed is None else seed + 1
 
-    data = RM.get_data(args.input, args.tcol, args.vcol, acc_col=args.acol, maxbias_col=args.mcol, time_scale_factor=args.timeunit, threads=args.threads)
-    event = RM.get_event(data, maxlen=args.maxlen, maxtime=args.maxtime, num_events=args.numevents, log_files=args.logfiles, quiet=args.quiet)
+    input_files = list(args.input or []) + (_expand_globs(args.input_glob) if args.input_glob else [])
+    if args.logfiles_glob:
+        logfiles = list(args.logfiles or []) + _expand_globs(args.logfiles_glob)
+    else:
+        logfiles = args.logfiles
+    data = RM.get_data(input_files, args.tcol, args.vcol, acc_col=args.acol, maxbias_col=args.mcol, time_scale_factor=args.timeunit, threads=args.threads)
+    event = RM.get_event(data, maxlen=args.maxlen, maxtime=args.maxtime, num_events=args.numevents, log_files=logfiles, quiet=args.quiet)
     run.data = data
     run.event = event
     run.results["ln(k_obs)"] = observed_log_rate(data, event)
