@@ -120,15 +120,19 @@ Important arguments:
   Quoted glob patterns for PLUMED log files, expanded by Python. Alternative
   to `--logfiles` for very long file lists.
 - `--threads`
-  Number of parallel workers. When `--bootstrap` is set, runs bootstrap resamples concurrently using threads. Otherwise, used as the multiprocessing core count for inner CDF computations.
+  Number of parallel workers. When `--bootstrap` is set, runs bootstrap
+  resamples concurrently using threads. Otherwise, passed as a core count
+  to the inner CDF computation (currently unused — see caveat below).
 
-  **Threading caveats (known limitation):** `--threads` only provides real
-  speedup when the inner work releases the Python GIL. For MLE-based methods
-  (`-e`, `-k`, `-m`) the bootstrap workers call `scipy.optimize.minimize_scalar`
-  with a Python-level callback, which holds the GIL throughout. The threads are
-  created but run sequentially in practice, so you will see ~100% CPU regardless
-  of `--threads`. CDF-based methods (`-E`, `-K`, `-M`) involve heavier NumPy
-  array work that does release the GIL and will benefit more from threading.
+  **Threading caveats (known limitation):** `--threads` currently provides
+  no real speedup for `eatr-analysis` in any mode. With `--bootstrap`, the
+  workers use `ThreadPoolExecutor` but all methods (both MLE and CDF) call
+  `scipy.optimize` routines with Python-level callbacks, which hold the GIL
+  throughout — threads are created but run sequentially, so you will see
+  ~100% CPU regardless of `--threads`. Without `--bootstrap`, the `cores`
+  parameter is passed through to the rate functions but the underlying
+  `_map_with_cores` helper is never actually called, so it has no effect
+  there either. This is a known limitation to be fixed in a future version.
 - `-m`/`-M`, `-k`/`-K`, `-e`/`-E`
   Select estimator(s). Lowercase is MLE, uppercase is CDF fitting:
   `-m`/`-M` iMetaD, `-k`/`-K` KTR, `-e`/`-E` EATR.
