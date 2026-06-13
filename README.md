@@ -121,6 +121,14 @@ Important arguments:
   to `--logfiles` for very long file lists.
 - `--threads`
   Number of parallel workers. When `--bootstrap` is set, runs bootstrap resamples concurrently using threads. Otherwise, used as the multiprocessing core count for inner CDF computations.
+
+  **Threading caveats (known limitation):** `--threads` only provides real
+  speedup when the inner work releases the Python GIL. For MLE-based methods
+  (`-e`, `-k`, `-m`) the bootstrap workers call `scipy.optimize.minimize_scalar`
+  with a Python-level callback, which holds the GIL throughout. The threads are
+  created but run sequentially in practice, so you will see ~100% CPU regardless
+  of `--threads`. CDF-based methods (`-E`, `-K`, `-M`) involve heavier NumPy
+  array work that does release the GIL and will benefit more from threading.
 - `-m`/`-M`, `-k`/`-K`, `-e`/`-E`
   Select estimator(s). Lowercase is MLE, uppercase is CDF fitting:
   `-m`/`-M` iMetaD, `-k`/`-K` KTR, `-e`/`-E` EATR.
@@ -185,6 +193,17 @@ Important arguments:
   Time, bias, and optional acceleration columns.
 - `--threads`
   Run independent set/bootstrap work in parallel.
+
+  **Threading caveats (known limitation):** The per-set analysis
+  (`analyze_set`) and the gamma-grid diagnostic scan (`_scan_barrier`)
+  are NumPy-heavy and release the Python GIL, so multiple threads genuinely
+  overlap. However, each NumPy/BLAS call can itself spawn additional OS threads
+  (OpenBLAS, MKL, or OpenMP). Inside containers (e.g. Apptainer) the BLAS
+  library sees all host CPUs, so the observed CPU usage can be much higher than
+  `--threads` alone implies. If you need to cap total CPU use, set
+  `OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1` alongside
+  `--threads N`.
+
 - `--logfiles`, `--maxlen`, `--maxtime`, `--numevents`
   Set-wise transition detection. Call `--logfiles` once per set.
 - `--logfiles-glob`
