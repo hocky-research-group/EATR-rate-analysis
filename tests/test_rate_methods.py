@@ -49,6 +49,30 @@ class RateMethodTests(unittest.TestCase):
         self.assertTrue(np.allclose(result, [3.0, 0.2]))
         self.assertEqual(chosen["p0"], (3.0, 0.2))
 
+    def test_eatr_cdf_rate_uses_only_transitioned_times_for_ecdf(self):
+        data = [
+            np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]]),
+            np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [3.0, 0.0]]),
+        ]
+        event = np.array([True, False])
+
+        captured = {}
+
+        def fake_curve_fit(_func, xdata, ydata, p0=None, **_kwargs):
+            captured["xdata"] = np.array(xdata, copy=True)
+            captured["ydata"] = np.array(ydata, copy=True)
+            return np.array(p0), None
+
+        with (
+            mock.patch.object(rm, "iMetaD_invMRT", return_value=2.0),
+            mock.patch.object(rm, "EATR_MLE_rate", return_value=np.array([3.0, 0.2])),
+            mock.patch.object(rm.optimize, "curve_fit", side_effect=fake_curve_fit),
+        ):
+            rm.EATR_CDF_rate(data, beta=1.0, event=event)
+
+        self.assertEqual(captured["xdata"].tolist(), [2])
+        self.assertEqual(captured["ydata"].tolist(), [0.5])
+
     def test_bootstrap_resamples_event_labels_with_sample(self):
         sample = ["a", "b", "c"]
         event = np.array([True, False, False])

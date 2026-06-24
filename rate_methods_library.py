@@ -148,6 +148,55 @@ def get_data(colvars, time_col, bias_col, acc_col=None, maxbias_col=None, time_s
         data = [_load_one(colvar) for colvar in colvars]
     return data
 
+def check_acc_consistency(data, beta, rtol=2.0, n_sample=5):
+    """Check that the acc column (col 2) agrees with integral(exp(beta*V)) / t_final.
+
+    Compares PLUMED's precomputed acceleration factor against what the code would
+    compute from the bias column using the given beta.  A large disagreement
+    (ratio outside [1/rtol, rtol]) almost always means the energy unit is wrong.
+
+    Parameters
+    ----------
+    data   : list of trajectories as returned by get_data (with acc_col provided)
+    beta   : inverse temperature in units matching the bias column
+    rtol   : allowed ratio between acc_file and acc_computed before warning (default 2.0)
+    n_sample : number of trajectories to check (picks longest ones for better statistics)
+    """
+    if data[0][0, 2] is None:
+        return  # no acc column loaded, nothing to check
+
+    from scipy.integrate import trapezoid as _trapz
+
+    lengths = [len(traj) for traj in data]
+    indices = sorted(range(len(data)), key=lambda i: lengths[i], reverse=True)[:n_sample]
+
+    ratios = []
+    for i in indices:
+        traj = data[i]
+        t = traj[:, 0].astype(float)
+        v = traj[:, 1].astype(float)
+        acc_file = float(traj[-1, 2])
+        if acc_file == 0 or t[-1] == 0:
+            continue
+        acc_computed = _trapz(np.exp(beta * v), t) / t[-1]
+        ratios.append(acc_file / acc_computed)
+
+    if not ratios:
+        return
+
+    median_ratio = float(np.median(ratios))
+    if not (1.0 / rtol <= median_ratio <= rtol):
+        import warnings
+        warnings.warn(
+            f"The acc column in your COLVAR files disagrees with integral(exp(beta*V))/t "
+            f"by a factor of {median_ratio:.2f} (checked {len(ratios)} trajectories). "
+            f"This usually means the energy unit is wrong. "
+            f"If your bias is in kcal/mol, pass --energyunit 4.184. "
+            f"If it is in kJ/mol, pass --energyunit 1 (the default).",
+            stacklevel=2,
+        )
+
+
 def get_event(data, maxlen=None, maxtime=None, num_events=None, log_files=None, quiet=False, qquiet=False):
     # Determine which simulations transitioned.
     # log_files: The simulations where the corresponding PLUMED log file contains the line "#! SET COMMIT(T)ED TO BASIN X" have transitioned.
@@ -444,7 +493,7 @@ def KTR_CDF_rate(data, beta, event=None, k_bounds=(-np.inf,np.inf), gamma_bounds
         init_guess = (iMetaD_invMRT(data, beta, event=event, bias_shift=bias_shift),0.9)
     
     # 2-parameter CDF fitting for gamma and k0
-    ecdfx_indices = np.sort(final_time_indices)
+    ecdfx_indices = np.sort(final_time_indices[event])
     ecdfy = np.arange(1, event.sum()+1) / len(data)
 
     if not do_bopt: # No Bayesian Optimization method: instead use Bounded Brent (if λ > 0) or Levenberg-Marquardt (if λ = 0) method
@@ -482,7 +531,7 @@ def KTR_CDF_rate_VMB(vmb_average, final_time_indices, event=None, k_bounds=(-np.
         kIMD = init_guess[0]
     
     # 2-parameter CDF fitting for gamma and k0
-    ecdfx_indices = np.sort(final_time_indices)
+    ecdfx_indices = np.sort(final_time_indices[event])
     ecdfy = np.arange(1, event.sum()+1) / len(final_time_indices)
 
     if not do_bopt: # No Bayesian Optimization method: instead use Bounded Brent (if λ > 0) or Levenberg-Marquardt (if λ = 0) method
@@ -626,7 +675,7 @@ def EATR_CDF_rate(data, beta, event=None, k_bounds=(0.,np.inf), gamma_bounds=(0.
         event = _default_event(final_time_indices)
 
     # 2-parameter CDF fitting for gamma and k0
-    ecdfx_indices = np.sort(final_time_indices)
+    ecdfx_indices = np.sort(final_time_indices[event])
     ecdfy = np.arange(1, event.sum()+1) / len(data)
     
     # Precompute bias matrix once; only gamma changes between optimizer steps.

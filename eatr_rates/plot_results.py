@@ -379,6 +379,8 @@ def plot_flooding_payload(
 
 
 def cdf_plot_key_for_method(method: str, payloads: list[dict[str, object]]) -> str | None:
+    if method == "imetad-cdf":
+        return "iMetaD CDF plot"
     if method == "eatr-cdf":
         return "EATR CDF plot"
     if method == "eatr-mle":
@@ -401,6 +403,7 @@ def plot_regular_series_cdfs(payloads, labels, key: str, output: str, time_unit:
     plt = pyplot()
     fig, ax = plt.subplots(figsize=(3.35, 2.23), constrained_layout=True)
     colors = [SET_COLORS[idx % len(SET_COLORS)] for idx in range(len(payloads))]
+    fit_label = "iMetaD fit" if key == "iMetaD CDF plot" else "EATR fit"
     positive_times = []
     for payload, label, color in zip(payloads, labels, colors):
         plot_payload = payload[key]
@@ -413,7 +416,7 @@ def plot_regular_series_cdfs(payloads, labels, key: str, output: str, time_unit:
         positive_times.append(display_times)
         ax.plot(display_times, ecdf, linestyle="none", marker="o", markersize=3.2, color=color)
         ax.plot(display_times, fit, color=color, linewidth=1.4, label=label)
-    ax.text(0.03, 0.97, "points: empirical CDF\nlines: EATR fit", transform=ax.transAxes, va="top", ha="left", fontsize=8.5)
+    ax.text(0.03, 0.97, f"points: empirical CDF\nlines: {fit_label}", transform=ax.transAxes, va="top", ha="left", fontsize=8.5)
     ax.set_xscale("log")
     if positive_times:
         apply_xlimits(ax, np.concatenate(positive_times), "log")

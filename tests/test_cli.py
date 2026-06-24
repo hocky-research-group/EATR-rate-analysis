@@ -171,6 +171,47 @@ class CliTests(unittest.TestCase):
             self.assertIn("iMetaD MLE KS stat", payload)
 
     @unittest.skipUnless(find_spec("numpy") and find_spec("scipy"), "numpy and scipy are required")
+    def test_rates_cli_imetad_cdf_writes_plot_payload(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            colvar1 = tmp_path / "traj1.colvar"
+            colvar2 = tmp_path / "traj2.colvar"
+            output = tmp_path / "imetad_cdf.json"
+            repo_root = Path(__file__).resolve().parents[1]
+
+            _write_colvar(colvar1, [(0, 0, 0.1), (1, 0, 0.15), (2, 0, 0.2), (3, 0, 0.25)])
+            _write_colvar(colvar2, [(0, 0, 0.2), (1, 0, 0.25), (2, 0, 0.3), (3, 0, 0.35)])
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "eatr_rates",
+                    "-i",
+                    str(colvar1),
+                    str(colvar2),
+                    "-M",
+                    "--threads",
+                    "1",
+                    "-q",
+                    "-o",
+                    str(output),
+                ],
+                cwd=tmp_path,
+                env={**os.environ, "PYTHONPATH": str(repo_root)},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertIn("iMetaD CDF plot", payload)
+            self.assertEqual(sorted(payload["iMetaD CDF plot"]), ["ecdf", "fit", "time"])
+            self.assertEqual(len(payload["iMetaD CDF plot"]["time"]), len(payload["iMetaD CDF plot"]["ecdf"]))
+            self.assertEqual(len(payload["iMetaD CDF plot"]["time"]), len(payload["iMetaD CDF plot"]["fit"]))
+
+    @unittest.skipUnless(find_spec("numpy") and find_spec("scipy"), "numpy and scipy are required")
     def test_check_order_cli_writes_pairs(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)

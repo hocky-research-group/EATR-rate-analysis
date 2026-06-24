@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import os
 import random
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
@@ -55,7 +56,7 @@ def _expand_globs(patterns: list[str]) -> list[str]:
     """Expand a list of glob patterns to a sorted list of file paths (Python-side expansion)."""
     result = []
     for pattern in patterns:
-        matches = sorted(glob.glob(pattern, recursive=True))
+        matches = sorted(p for p in glob.glob(pattern, recursive=True) if not os.path.basename(p).startswith("bck"))
         if not matches:
             raise SystemExit(f"No files matched glob pattern: {pattern!r}")
         result.extend(matches)
@@ -307,6 +308,22 @@ def build_eatr_cdf_plot_payload(data, event, final_time_indices, log_average_exp
     }
 
 
+def build_exp_cdf_plot_payload(times, event, log_k: float):
+    event = np.asarray(event, dtype=bool)
+    times = np.asarray(times, dtype=float)
+    if event.sum() == 0:
+        return {"time": [], "ecdf": [], "fit": []}
+    transitioned_times = times[event]
+    sorted_times = np.sort(transitioned_times)
+    ecdf = np.arange(1, len(sorted_times) + 1, dtype=float) / len(times)
+    fit = 1.0 - np.exp(-np.exp(log_k) * sorted_times)
+    return {
+        "time": sorted_times.tolist(),
+        "ecdf": ecdf.tolist(),
+        "fit": np.asarray(fit, dtype=float).tolist(),
+    }
+
+
 def analyze(args: argparse.Namespace) -> AnalysisResult:
     # --threads controls the ProcessPoolExecutor worker count for bootstrap.
     use_threaded_bootstrap = args.bootstrap and args.threads > 1
@@ -346,6 +363,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
     else:
         logfiles = args.logfiles
     data = RM.get_data(input_files, args.tcol, args.vcol, acc_col=args.acol, maxbias_col=args.mcol, time_scale_factor=args.timeunit, threads=args.threads)
+    RM.check_acc_consistency(data, beta)
     event = RM.get_event(data, maxlen=args.maxlen, maxtime=args.maxtime, num_events=args.numevents, log_files=logfiles, quiet=args.quiet)
     run.data = data
     run.event = event
@@ -426,6 +444,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
                 run.results["iMetaD CDF ln k"] = np.mean(np.log(sample))
                 run.results["iMetaD CDF ln k std"] = np.std(np.log(sample))
             seed = seed if seed is None else seed + 1
+        run.results["iMetaD CDF plot"] = build_exp_cdf_plot_payload(rescaled_times, event, run.results["iMetaD CDF ln k"])
         size = np.int64(len(data) * 5e4)
         rvs1 = gamma_func.rvs(1, scale=np.exp(-run.results["iMetaD CDF ln k"]), size=size, random_state=seed)
         seed = seed if seed is None else seed + 1

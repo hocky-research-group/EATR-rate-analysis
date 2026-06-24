@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import os
 import random
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -94,6 +95,8 @@ class FloodingAnalysisResult:
     flooding_diagnostics: dict[str, object] | None = None
     bootstrap_logk0_std: float | None = None
     bootstrap_gamma_std: float | None = None
+    bootstrap_gamma_ci: list[float] | None = None
+    bootstrap_logk0_ci: list[float] | None = None
     bootstrap_opes_logk0_std: float | None = None
     bootstrap_per_set_log_k_obs_std: list[float] | None = None
     bootstrap_per_set_ln_exp_beta_v_std: list[float] | None = None
@@ -105,7 +108,7 @@ def _expand_globs(patterns: list[str]) -> list[str]:
     """Expand a list of glob patterns to a sorted list of file paths (Python-side expansion)."""
     result = []
     for pattern in patterns:
-        matches = sorted(glob.glob(pattern, recursive=True))
+        matches = sorted(p for p in glob.glob(pattern, recursive=True) if not os.path.basename(p).startswith("bck"))
         if not matches:
             raise SystemExit(f"No files matched glob pattern: {pattern!r}")
         result.extend(matches)
@@ -203,7 +206,9 @@ def result_payload(result: FloodingAnalysisResult, plot_time_unit: str) -> dict[
         "opes_logk0": result.opes_logk0,
         "flooding_diagnostics": result.flooding_diagnostics,
         "bootstrap_logk0_std": result.bootstrap_logk0_std,
+        "bootstrap_logk0_ci": result.bootstrap_logk0_ci,
         "bootstrap_gamma_std": result.bootstrap_gamma_std,
+        "bootstrap_gamma_ci": result.bootstrap_gamma_ci,
         "bootstrap_opes_logk0_std": result.bootstrap_opes_logk0_std,
         "bootstrap_per_set_log_k_obs_std": result.bootstrap_per_set_log_k_obs_std,
         "bootstrap_per_set_ln_exp_beta_v_std": result.bootstrap_per_set_ln_exp_beta_v_std,
@@ -227,6 +232,11 @@ def result_payload(result: FloodingAnalysisResult, plot_time_unit: str) -> dict[
     }
 
 
+def _percentile_interval(values: list[float], alpha: float = 0.05) -> list[float]:
+    arr = np.asarray(values)
+    return [float(np.quantile(arr, alpha / 2.0)), float(np.quantile(arr, 1.0 - alpha / 2.0))]
+
+
 def format_flooding_result(result: FloodingAnalysisResult) -> list[str]:
     lines = [f"Using β = {result.beta}"]
     for report in result.set_reports:
@@ -245,7 +255,15 @@ def format_flooding_result(result: FloodingAnalysisResult) -> list[str]:
         suffix = ""
         if result.opes_logk0 is not None and result.bootstrap_opes_logk0_std is not None:
             suffix = f", OPES logk0: {result.opes_logk0} +/- σ {result.bootstrap_opes_logk0_std} s^-1"
-        lines.append(f"logk0: {result.logk0} +/- σ {result.bootstrap_logk0_std} s^-1, τ0: {np.exp(-result.logk0)} s, gamma: {result.gamma} +/- σ {result.bootstrap_gamma_std}{suffix}")
+        if result.bootstrap_gamma_ci is not None:
+            gamma_unc = f"95% CI [{result.bootstrap_gamma_ci[0]:.4f}, {result.bootstrap_gamma_ci[1]:.4f}]"
+        else:
+            gamma_unc = f"+/- σ {result.bootstrap_gamma_std}"
+        if result.bootstrap_logk0_ci is not None:
+            logk0_unc = f"95% CI [{result.bootstrap_logk0_ci[0]:.4f}, {result.bootstrap_logk0_ci[1]:.4f}]"
+        else:
+            logk0_unc = f"+/- σ {result.bootstrap_logk0_std}"
+        lines.append(f"logk0: {result.logk0} {logk0_unc} s^-1, τ0: {np.exp(-result.logk0)} s, gamma: {result.gamma} {gamma_unc}{suffix}")
     return lines
 
 
@@ -271,8 +289,12 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
 
     datas = []
     events = []
+    acc_checked = False
     for i, colvars in enumerate(args.input):
         data = RM.get_data(colvars, args.tcol, args.vcol, acc_col=args.acol, time_scale_factor=args.timeunit, threads=args.threads, work_col=args.wcol)
+        if not acc_checked:
+            RM.check_acc_consistency(data, beta)
+            acc_checked = True
         event = RM.get_event(data, maxlen=args.maxlen, maxtime=args.maxtime, num_events=num_eventss[i], log_files=log_filess[i], quiet=True)
         datas.append(data)
         events.append(event)
@@ -372,12 +394,12 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
                 opesf_times_local.extend(list(rescaled_times))
                 opesf_event_local.extend(list(event))
 
-            ecdfxs = np.sort(final_times)
-            ecdfys = np.linspace(1 / len(event), 1, len(event))
+            ecdfxs_event = np.sort(final_times[event])
+            ecdfys_event = np.arange(1, event.sum() + 1) / len(event)
             emp_rate = event.sum() / final_times.sum()
             if args.cdf:
-                obs_rate = optimize.curve_fit(lambda t, k: 1 - np.exp(-k * t), ecdfxs[: event.sum()], ecdfys[: event.sum()], p0=emp_rate)[0][0]
-                ks_stat, p = ks_1samp(ecdfxs[: event.sum()], lambda t: 1 - np.exp(-obs_rate * t))
+                obs_rate = optimize.curve_fit(lambda t, k: 1 - np.exp(-k * t), ecdfxs_event, ecdfys_event, p0=emp_rate)[0][0]
+                ks_stat, p = ks_1samp(ecdfxs_event, lambda t: 1 - np.exp(-obs_rate * t))
             else:
                 obs_rate = emp_rate
                 ks_stat, p = ksc.ks_1samp_censored(final_times, event, lambda t: np.exp(-emp_rate * t))
@@ -521,6 +543,8 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
         flooding_diagnostics=diagnostics,
         bootstrap_logk0_std=float(np.std(sample_logk0)),
         bootstrap_gamma_std=float(np.std(sample_gamma)),
+        bootstrap_gamma_ci=_percentile_interval(sample_gamma),
+        bootstrap_logk0_ci=_percentile_interval(sample_logk0),
         bootstrap_opes_logk0_std=None if sample_opesf[0] is None else float(np.std(sample_opesf)),
         bootstrap_per_set_log_k_obs_std=[float(np.std(s)) for s in sample_set_log_k_obs],
         bootstrap_per_set_ln_exp_beta_v_std=[float(np.std(s)) for s in sample_set_ln_exp_beta_v],
