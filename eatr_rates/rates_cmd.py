@@ -371,8 +371,13 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
     if args.logfiles_glob:
         logfiles = list(args.logfiles or []) + _expand_globs(args.logfiles_glob)
     else:
-        logfiles = args.logfiles
-    data = RM.get_data(input_files, args.tcol, args.vcol, acc_col=args.acol, maxbias_col=args.mcol, time_scale_factor=args.timeunit, threads=args.threads)
+        logfiles = list(args.logfiles) if args.logfiles else None
+    data, skipped = RM.get_data(input_files, args.tcol, args.vcol, acc_col=args.acol, maxbias_col=args.mcol, time_scale_factor=args.timeunit, threads=args.threads)
+    if skipped:
+        for idx in skipped:
+            add_message(run, f"WARNING: skipping unreadable COLVAR file: {input_files[idx]}")
+        if logfiles is not None:
+            logfiles = [logfiles[i] for i in range(len(logfiles)) if i not in skipped]
     RM.check_acc_consistency(data, beta)
     event = RM.get_event(data, maxlen=args.maxlen, maxtime=args.maxtime, num_events=args.numevents, log_files=logfiles, quiet=args.quiet)
     run.data = data

@@ -140,7 +140,18 @@ def _cum_hazards_ktr(vmb_average, gamma, final_time_indices, logTrick=False):
 # [t2 V2 acc2 Vm2],
 # ...
 # ]
-def get_data(colvars, time_col, bias_col, acc_col=None, maxbias_col=None, time_scale_factor=1.0, threads=1, work_col=None):  # Changed "file_format" to "colvars"
+def get_data(colvars, time_col, bias_col, acc_col=None, maxbias_col=None, time_scale_factor=1.0, threads=1, work_col=None, skip_errors=True):  # Changed "file_format" to "colvars"
+    """Load trajectory data from COLVAR files.
+
+    Returns
+    -------
+    data : list of np.ndarray
+        Successfully loaded trajectories.
+    skipped : list of int
+        Indices (into the original *colvars* list) of files that could not be
+        loaded.  Empty when all files loaded successfully.  When skip_errors is
+        False a ValueError is raised instead of collecting skipped indices.
+    """
     if len(colvars) == 0:
         sys.exit(f"ERROR: No COLVAR files provided.")
 
@@ -163,13 +174,33 @@ def get_data(colvars, time_col, bias_col, acc_col=None, maxbias_col=None, time_s
             traj = np.hstack([traj, work.reshape(-1, 1).astype(float)])
         return traj
 
+    def _load_safe(colvar):
+        try:
+            return _load_one(colvar)
+        except Exception:
+            return None
+
     if threads > 1:
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=threads) as executor:
-            data = list(executor.map(_load_one, colvars))
+            if skip_errors:
+                results = list(executor.map(_load_safe, colvars))
+            else:
+                results = list(executor.map(_load_one, colvars))
     else:
-        data = [_load_one(colvar) for colvar in colvars]
-    return data
+        if skip_errors:
+            results = [_load_safe(c) for c in colvars]
+        else:
+            results = [_load_one(c) for c in colvars]
+
+    data = []
+    skipped = []
+    for i, result in enumerate(results):
+        if result is None:
+            skipped.append(i)
+        else:
+            data.append(result)
+    return data, skipped
 
 def check_acc_consistency(data, beta, rtol=2.0, n_sample=5):
     """Check that the acc column (col 2) agrees with integral(exp(beta*V)) / t_final.

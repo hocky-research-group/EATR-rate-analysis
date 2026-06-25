@@ -5,6 +5,7 @@ import glob
 import json
 import os
 import random
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -291,7 +292,13 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
     events = []
     acc_checked = False
     for i, colvars in enumerate(args.input):
-        data = RM.get_data(colvars, args.tcol, args.vcol, acc_col=args.acol, time_scale_factor=args.timeunit, threads=args.threads, work_col=args.wcol)
+        data, skipped = RM.get_data(colvars, args.tcol, args.vcol, acc_col=args.acol, time_scale_factor=args.timeunit, threads=args.threads, work_col=args.wcol)
+        if skipped:
+            for idx in skipped:
+                print(f"WARNING: skipping unreadable COLVAR file: {colvars[idx]}", file=sys.stderr)
+            log_set = log_filess[i]
+            if log_set is not None:
+                log_filess[i] = [log_set[j] for j in range(len(log_set)) if j not in skipped]
         if not acc_checked:
             RM.check_acc_consistency(data, beta)
             acc_checked = True
