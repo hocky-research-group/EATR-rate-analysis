@@ -5,7 +5,7 @@ capture closures or lambdas — required for multiprocessing 'spawn' on macOS.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -29,6 +29,7 @@ class IMetaDCDFConfig:
     bias_shift: float
     k_bounds: tuple
     k_guess: float | None
+    require_convergence: bool = False
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,7 @@ class KTRCDFConfig:
     init_guess: tuple
     do_bopt: bool
     bias_shift: float
+    require_convergence: bool = False
 
 
 @dataclass(frozen=True)
@@ -69,6 +71,7 @@ class EATRCDFConfig:
     init_guess: tuple
     do_bopt: bool
     bias_shift: float
+    require_convergence: bool = False
 
 
 def _run_worker(task):
@@ -87,7 +90,8 @@ def _run_worker(task):
     -------
     float or np.ndarray of float
         Scalar for single-valued methods; 2-element array for methods that
-        return (k0, gamma).
+        return (k0, gamma); CDF methods append a converged float (1.0/0.0) as
+        the last element.
     """
     indices, sample, event, config = task
     resample = [sample[int(i)] for i in indices]
@@ -103,10 +107,12 @@ def _run_worker(task):
                                  bias_shift=config.bias_shift)
 
     if isinstance(config, IMetaDCDFConfig):
-        return RM.iMetaD_FitCDF(resample, config.beta, event=eve,
-                                 bias_shift=config.bias_shift,
-                                 k_bounds=config.k_bounds,
-                                 k_guess=config.k_guess)
+        k, converged = RM.iMetaD_FitCDF(resample, config.beta, event=eve,
+                                         bias_shift=config.bias_shift,
+                                         k_bounds=config.k_bounds,
+                                         k_guess=config.k_guess,
+                                         require_convergence=config.require_convergence)
+        return np.array([k, float(converged)])
 
     if isinstance(config, KTRMLEConfig):
         return RM.KTR_MLE_rate(resample, config.beta, event=eve,
@@ -116,13 +122,15 @@ def _run_worker(task):
                                 bias_shift=config.bias_shift)
 
     if isinstance(config, KTRCDFConfig):
-        return RM.KTR_CDF_rate(resample, config.beta, event=eve,
-                                k_bounds=config.k_bounds,
-                                gamma_bounds=config.gamma_bounds,
-                                logTrick=config.log_trick,
-                                init_guess=list(config.init_guess),
-                                do_bopt=config.do_bopt,
-                                bias_shift=config.bias_shift)
+        result, converged = RM.KTR_CDF_rate(resample, config.beta, event=eve,
+                                              k_bounds=config.k_bounds,
+                                              gamma_bounds=config.gamma_bounds,
+                                              logTrick=config.log_trick,
+                                              init_guess=list(config.init_guess),
+                                              do_bopt=config.do_bopt,
+                                              bias_shift=config.bias_shift,
+                                              require_convergence=config.require_convergence)
+        return np.array([result[0], result[1], float(converged)])
 
     if isinstance(config, EATRMLEConfig):
         return RM.EATR_MLE_rate(resample, config.beta, event=eve,
@@ -132,12 +140,14 @@ def _run_worker(task):
                                   bias_shift=config.bias_shift)
 
     if isinstance(config, EATRCDFConfig):
-        return RM.EATR_CDF_rate(resample, config.beta, event=eve,
-                                  k_bounds=config.k_bounds,
-                                  gamma_bounds=config.gamma_bounds,
-                                  logTrick=config.log_trick,
-                                  init_guess=list(config.init_guess),
-                                  do_bopt=config.do_bopt,
-                                  bias_shift=config.bias_shift)
+        result, converged = RM.EATR_CDF_rate(resample, config.beta, event=eve,
+                                               k_bounds=config.k_bounds,
+                                               gamma_bounds=config.gamma_bounds,
+                                               logTrick=config.log_trick,
+                                               init_guess=list(config.init_guess),
+                                               do_bopt=config.do_bopt,
+                                               bias_shift=config.bias_shift,
+                                               require_convergence=config.require_convergence)
+        return np.array([result[0], result[1], float(converged)])
 
     raise TypeError(f"Unknown config type: {type(config)}")

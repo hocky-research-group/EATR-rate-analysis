@@ -44,7 +44,7 @@ class RateMethodTests(unittest.TestCase):
             mock.patch.object(rm, "EATR_CDF", side_effect=fake_eatr_cdf),
             mock.patch.object(rm.optimize, "curve_fit", side_effect=fake_curve_fit),
         ):
-            result = rm.EATR_CDF_rate(data, beta=1.0, event=event)
+            result, converged = rm.EATR_CDF_rate(data, beta=1.0, event=event)
 
         self.assertTrue(np.allclose(result, [3.0, 0.2]))
         self.assertEqual(chosen["p0"], (3.0, 0.2))
