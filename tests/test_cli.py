@@ -128,7 +128,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(payload["plot_time_unit"], "microseconds")
             self.assertEqual(payload["numboots"], 6)
             self.assertIn("EATR MLE CDF plot", payload)
-            self.assertEqual(sorted(payload["EATR MLE CDF plot"]), ["ecdf", "fit", "time"])
+            self.assertTrue({"ecdf", "fit", "time", "n_total", "ln_k"}.issubset(set(payload["EATR MLE CDF plot"])))
             self.assertEqual(len(payload["EATR MLE CDF plot"]["time"]), len(payload["EATR MLE CDF plot"]["ecdf"]))
             self.assertEqual(len(payload["EATR MLE CDF plot"]["time"]), len(payload["EATR MLE CDF plot"]["fit"]))
 
@@ -207,7 +207,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             payload = json.loads(output.read_text(encoding="utf-8"))
             self.assertIn("iMetaD CDF plot", payload)
-            self.assertEqual(sorted(payload["iMetaD CDF plot"]), ["ecdf", "fit", "time"])
+            self.assertTrue({"ecdf", "fit", "time", "n_total", "ln_k"}.issubset(set(payload["iMetaD CDF plot"])))
             self.assertEqual(len(payload["iMetaD CDF plot"]["time"]), len(payload["iMetaD CDF plot"]["ecdf"]))
             self.assertEqual(len(payload["iMetaD CDF plot"]["time"]), len(payload["iMetaD CDF plot"]["fit"]))
 

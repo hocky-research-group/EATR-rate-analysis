@@ -404,7 +404,9 @@ def plot_regular_series_cdfs(payloads, labels, key: str, output: str, time_unit:
     fig, ax = plt.subplots(figsize=(3.35, 2.23), constrained_layout=True)
     colors = [SET_COLORS[idx % len(SET_COLORS)] for idx in range(len(payloads))]
     fit_label = "iMetaD fit" if key == "iMetaD CDF plot" else "EATR fit"
+    is_eatr = key != "iMetaD CDF plot"
     positive_times = []
+    annotation_items = []
     for payload, label, color in zip(payloads, labels, colors):
         plot_payload = payload[key]
         times = np.array(plot_payload["time"], dtype=float)
@@ -414,9 +416,29 @@ def plot_regular_series_cdfs(payloads, labels, key: str, output: str, time_unit:
             raise SystemExit("CDF plots require strictly positive transition times for log-scaled x-axis output.")
         display_times = times / seconds_per_unit
         positive_times.append(display_times)
+        n_total = plot_payload.get("n_total")
+        curve_label = f"{label} (n={n_total})" if n_total is not None else label
         ax.plot(display_times, ecdf, linestyle="none", marker="o", markersize=3.2, color=color)
-        ax.plot(display_times, fit, color=color, linewidth=1.4, label=label)
+        ax.plot(display_times, fit, color=color, linewidth=1.4, label=curve_label)
+        ln_k = plot_payload.get("ln_k")
+        gamma = plot_payload.get("gamma")
+        if ln_k is not None:
+            annotation_items.append((display_times, fit, ln_k, gamma, color, is_eatr))
     ax.text(0.03, 0.97, f"points: empirical CDF\nlines: {fit_label}", transform=ax.transAxes, va="top", ha="left", fontsize=8.5)
+    for i, (disp_t, fit_vals, ln_k, gamma, color, show_gamma) in enumerate(annotation_items):
+        k0_str = f"ln k₀={ln_k:.2f}"
+        ann_str = f"{k0_str}, γ={gamma:.2f}" if (show_gamma and gamma is not None) else k0_str
+        x_ann = disp_t[-1]
+        y_ann = fit_vals[-1]
+        ax.annotate(
+            ann_str,
+            xy=(x_ann, y_ann),
+            xytext=(0, -10 - 10 * i),
+            textcoords="offset points",
+            color=color,
+            fontsize=6.5,
+            ha="right",
+        )
     ax.set_xscale("log")
     if positive_times:
         apply_xlimits(ax, np.concatenate(positive_times), "log")

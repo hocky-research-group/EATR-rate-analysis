@@ -289,10 +289,10 @@ def emit_messages(run: AnalysisResult, quiet: bool) -> None:
         print(message)
 
 
-def build_eatr_cdf_plot_payload(data, event, final_time_indices, log_average_exp, log_k: float, log_trick: bool):
+def build_eatr_cdf_plot_payload(data, event, final_time_indices, log_average_exp, log_k: float, log_trick: bool, gamma: float | None = None):
     event = np.asarray(event, dtype=bool)
     if event.sum() == 0:
-        return {"time": [], "ecdf": [], "fit": []}
+        return {"time": [], "ecdf": [], "fit": [], "n_total": len(data), "n_events": 0, "ln_k": log_k}
     final_times = np.array([traj[-1, 0] for traj in data], dtype=float)
     transitioned_times = final_times[event]
     transitioned_indices = np.asarray(final_time_indices, dtype=int)[event]
@@ -301,18 +301,24 @@ def build_eatr_cdf_plot_payload(data, event, final_time_indices, log_average_exp
     sorted_indices = transitioned_indices[order]
     ecdf = np.arange(1, len(sorted_times) + 1, dtype=float) / len(data)
     fit = RM.EATR_CDF(sorted_indices, np.exp(log_k), log_average_exp, logTrick=log_trick)
-    return {
+    payload = {
         "time": sorted_times.tolist(),
         "ecdf": ecdf.tolist(),
         "fit": np.asarray(fit, dtype=float).tolist(),
+        "n_total": len(data),
+        "n_events": int(event.sum()),
+        "ln_k": float(log_k),
     }
+    if gamma is not None:
+        payload["gamma"] = float(gamma)
+    return payload
 
 
 def build_exp_cdf_plot_payload(times, event, log_k: float):
     event = np.asarray(event, dtype=bool)
     times = np.asarray(times, dtype=float)
     if event.sum() == 0:
-        return {"time": [], "ecdf": [], "fit": []}
+        return {"time": [], "ecdf": [], "fit": [], "n_total": len(times), "n_events": 0, "ln_k": log_k}
     transitioned_times = times[event]
     sorted_times = np.sort(transitioned_times)
     ecdf = np.arange(1, len(sorted_times) + 1, dtype=float) / len(times)
@@ -321,6 +327,9 @@ def build_exp_cdf_plot_payload(times, event, log_k: float):
         "time": sorted_times.tolist(),
         "ecdf": ecdf.tolist(),
         "fit": np.asarray(fit, dtype=float).tolist(),
+        "n_total": len(times),
+        "n_events": int(event.sum()),
+        "ln_k": float(log_k),
     }
 
 
@@ -567,7 +576,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
                 run.results["EATR MLE gamma std"] = np.std(sample[:, 1])
             seed = seed if seed is None else seed + 1
         log_average_exp = RM.avg_exponential(data, beta, run.results["EATR MLE gamma"], bias_shift=args.barrier)
-        run.results["EATR MLE CDF plot"] = build_eatr_cdf_plot_payload(data, event, final_time_indices, log_average_exp, run.results["EATR MLE ln k"], args.logtrick)
+        run.results["EATR MLE CDF plot"] = build_eatr_cdf_plot_payload(data, event, final_time_indices, log_average_exp, run.results["EATR MLE ln k"], args.logtrick, gamma=run.results["EATR MLE gamma"])
         ks_stat, p = ks_1samp(final_time_indices[event], lambda idx: RM.EATR_CDF(idx, np.exp(run.results["EATR MLE ln k"]), log_average_exp, logTrick=args.logtrick))
         run.results["EATR MLE KS stat"] = ks_stat
         run.results["EATR MLE p value"] = p
@@ -607,7 +616,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
                 run.results["EATR CDF gamma std"] = np.std(sample[:, 1])
             seed = seed if seed is None else seed + 1
         log_average_exp = RM.avg_exponential(data, beta, run.results["EATR CDF gamma"], bias_shift=args.barrier)
-        run.results["EATR CDF plot"] = build_eatr_cdf_plot_payload(data, event, final_time_indices, log_average_exp, run.results["EATR CDF ln k"], args.logtrick)
+        run.results["EATR CDF plot"] = build_eatr_cdf_plot_payload(data, event, final_time_indices, log_average_exp, run.results["EATR CDF ln k"], args.logtrick, gamma=run.results["EATR CDF gamma"])
         ks_stat, p = ks_1samp(final_time_indices[event], lambda idx: RM.EATR_CDF(idx, np.exp(run.results["EATR CDF ln k"]), log_average_exp, logTrick=args.logtrick))
         run.results["EATR CDF KS stat"] = ks_stat
         run.results["EATR CDF p value"] = p
