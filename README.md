@@ -120,19 +120,10 @@ Important arguments:
   Quoted glob patterns for PLUMED log files, expanded by Python. Alternative
   to `--logfiles` for very long file lists.
 - `--threads`
-  Number of parallel workers. When `--bootstrap` is set, runs bootstrap
-  resamples concurrently using threads. Otherwise, passed as a core count
-  to the inner CDF computation (currently unused — see caveat below).
-
-  **Threading caveats (known limitation):** `--threads` currently provides
-  no real speedup for `eatr-analysis` in any mode. With `--bootstrap`, the
-  workers use `ThreadPoolExecutor` but all methods (both MLE and CDF) call
-  `scipy.optimize` routines with Python-level callbacks, which hold the GIL
-  throughout — threads are created but run sequentially, so you will see
-  ~100% CPU regardless of `--threads`. Without `--bootstrap`, the `cores`
-  parameter is passed through to the rate functions but the underlying
-  `_map_with_cores` helper is never actually called, so it has no effect
-  there either. This is a known limitation to be fixed in a future version.
+  Number of parallel worker **processes** used for bootstrap resampling
+  (requires `--bootstrap`). Each resample runs in a separate process via
+  `ProcessPoolExecutor`, bypassing the GIL, so you get real multi-core
+  speedup. Has no effect outside of bootstrap mode.
 - `-m`/`-M`, `-k`/`-K`, `-e`/`-E`
   Select estimator(s). Lowercase is MLE, uppercase is CDF fitting:
   `-m`/`-M` iMetaD, `-k`/`-K` KTR, `-e`/`-E` EATR.
@@ -140,6 +131,14 @@ Important arguments:
 - `-b`, `--bootstrap`
   Enable bootstrap uncertainty analysis. Use `--numboots` to set the number
   of resamples (default: 100).
+- `--require-convergence`
+  Raise an error and abort if any CDF fit (point estimate or bootstrap
+  resample) fails to converge to tolerance. By default the best parameters
+  found at the end of the optimization iterations are saved and convergence
+  status is recorded in the JSON output as `"<method> CDF converged"` (bool)
+  and `"<method> CDF n_unconverged_boots"` (int count of non-converged
+  bootstrap resamples). Pass `--require-convergence` to restore the old
+  error-on-failure behavior.
 - `--plot-time-unit`
   Time unit for rate values in plots and JSON metadata (e.g. `microseconds`,
   `milliseconds`, `seconds`). Does not affect the numerical computation.
@@ -151,7 +150,13 @@ Notes:
 
 - `KTR` and regular `EATR` are not intended for OPES flooding trajectories. Use `eatr-flooding-analysis` for those.
 - If your COLVAR file includes an acceleration column, passing `--acol` is preferable.
+  When `--acol` is set, the tool checks that the column's values agree with the
+  integral `(1/t)∫exp(βV) dt` computed from the bias column. A warning is printed
+  (with a suggestion to try `--energyunit 4.184`) if they differ by more than a factor
+  of 2.
 - If your COLVAR files were written in femtoseconds and you want SI rates, use `--timeunit 1e-15`.
+- Glob patterns passed to `-g`/`--input-glob` or `--logfiles-glob` automatically
+  exclude any file whose basename starts with `bck` (PLUMED backup files).
 
 ### `eatr-flooding-analysis`
 
@@ -214,6 +219,8 @@ Important arguments:
   Quoted glob patterns for logfiles of one simulation set, expanded by
   Python. Call once per set. Alternative to `--logfiles` for very long
   file lists.
+- Glob patterns passed to `--input-glob` or `--logfiles-glob` automatically
+  exclude any file whose basename starts with `bck` (PLUMED backup files).
 - `-b`, `--bootstrap`, `--numboots`
   Enable bootstrap uncertainty analysis. `--numboots` sets the number of
   resamples (default: 100).
@@ -278,6 +285,8 @@ eatr-analysis-plot regular-series \
 ```
 
 `--truerate` draws a reference horizontal line at the known ln(k0) value (in the display time unit) for comparison.
+
+When `--cdf-output` is given alongside `--method eatr-cdf` or `imetad-cdf`, an overlay CDF figure is also written. Each curve's legend label includes the total number of trajectories (`n=N`), and the fitted ln(k₀) and γ values are annotated near the curve endpoint.
 
 Flooding example:
 
