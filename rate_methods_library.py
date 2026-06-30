@@ -196,7 +196,9 @@ def get_data(colvars, time_col, bias_col, acc_col=None, maxbias_col=None, time_s
     data = []
     skipped = []
     for i, result in enumerate(results):
-        if result is None:
+        if result is None or result.ndim < 2 or result.shape[0] == 0:
+            if result is not None:
+                print(f"Warning: skipping {colvars[i]}: file loaded but contains no data rows", file=sys.stderr)
             skipped.append(i)
         else:
             data.append(result)
