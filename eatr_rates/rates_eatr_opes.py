@@ -99,6 +99,7 @@ class FloodingAnalysisResult:
     bootstrap_gamma_ci: list[float] | None = None
     bootstrap_logk0_ci: list[float] | None = None
     bootstrap_opes_logk0_std: float | None = None
+    bootstrap_opes_logk0_ci: list[float] | None = None
     bootstrap_per_set_log_k_obs_std: list[float] | None = None
     bootstrap_per_set_ln_exp_beta_v_std: list[float] | None = None
     bootstrap_iterations: list[int] = field(default_factory=list)
@@ -211,6 +212,7 @@ def result_payload(result: FloodingAnalysisResult, plot_time_unit: str) -> dict[
         "bootstrap_gamma_std": result.bootstrap_gamma_std,
         "bootstrap_gamma_ci": result.bootstrap_gamma_ci,
         "bootstrap_opes_logk0_std": result.bootstrap_opes_logk0_std,
+        "bootstrap_opes_logk0_ci": result.bootstrap_opes_logk0_ci,
         "bootstrap_per_set_log_k_obs_std": result.bootstrap_per_set_log_k_obs_std,
         "bootstrap_per_set_ln_exp_beta_v_std": result.bootstrap_per_set_ln_exp_beta_v_std,
         "bootstrap_iterations": result.bootstrap_iterations,
@@ -255,15 +257,16 @@ def format_flooding_result(result: FloodingAnalysisResult) -> list[str]:
     else:
         suffix = ""
         if result.opes_logk0 is not None and result.bootstrap_opes_logk0_std is not None:
-            suffix = f", OPES logk0: {result.opes_logk0} +/- σ {result.bootstrap_opes_logk0_std} s^-1"
+            opes_unc = f"+/- σ {result.bootstrap_opes_logk0_std}"
+            if result.bootstrap_opes_logk0_ci is not None:
+                opes_unc += f", 95% CI [{result.bootstrap_opes_logk0_ci[0]:.4f}, {result.bootstrap_opes_logk0_ci[1]:.4f}]"
+            suffix = f", OPES logk0: {result.opes_logk0} {opes_unc} s^-1"
+        gamma_unc = f"+/- σ {result.bootstrap_gamma_std}"
         if result.bootstrap_gamma_ci is not None:
-            gamma_unc = f"95% CI [{result.bootstrap_gamma_ci[0]:.4f}, {result.bootstrap_gamma_ci[1]:.4f}]"
-        else:
-            gamma_unc = f"+/- σ {result.bootstrap_gamma_std}"
+            gamma_unc += f", 95% CI [{result.bootstrap_gamma_ci[0]:.4f}, {result.bootstrap_gamma_ci[1]:.4f}]"
+        logk0_unc = f"+/- σ {result.bootstrap_logk0_std}"
         if result.bootstrap_logk0_ci is not None:
-            logk0_unc = f"95% CI [{result.bootstrap_logk0_ci[0]:.4f}, {result.bootstrap_logk0_ci[1]:.4f}]"
-        else:
-            logk0_unc = f"+/- σ {result.bootstrap_logk0_std}"
+            logk0_unc += f", 95% CI [{result.bootstrap_logk0_ci[0]:.4f}, {result.bootstrap_logk0_ci[1]:.4f}]"
         lines.append(f"logk0: {result.logk0} {logk0_unc} s^-1, τ0: {np.exp(-result.logk0)} s, gamma: {result.gamma} {gamma_unc}{suffix}")
     return lines
 
@@ -553,6 +556,7 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
         bootstrap_gamma_ci=_percentile_interval(sample_gamma),
         bootstrap_logk0_ci=_percentile_interval(sample_logk0),
         bootstrap_opes_logk0_std=None if sample_opesf[0] is None else float(np.std(sample_opesf)),
+        bootstrap_opes_logk0_ci=None if sample_opesf[0] is None else _percentile_interval(sample_opesf),
         bootstrap_per_set_log_k_obs_std=[float(np.std(s)) for s in sample_set_log_k_obs],
         bootstrap_per_set_ln_exp_beta_v_std=[float(np.std(s)) for s in sample_set_ln_exp_beta_v],
         bootstrap_iterations=iterations,
