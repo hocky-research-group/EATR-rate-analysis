@@ -140,8 +140,18 @@ def _cum_hazards_ktr(vmb_average, gamma, final_time_indices, logTrick=False):
 # [t2 V2 acc2 Vm2],
 # ...
 # ]
-def get_data(colvars, time_col, bias_col, acc_col=None, maxbias_col=None, time_scale_factor=1.0, threads=1, work_col=None, skip_errors=True):  # Changed "file_format" to "colvars"
+def get_data(colvars, time_col, bias_col, acc_col=None, maxbias_col=None, time_scale_factor=1.0, threads=1, work_col=None, skip_errors=True, stride=1):  # Changed "file_format" to "colvars"
     """Load trajectory data from COLVAR files.
+
+    Parameters
+    ----------
+    stride : int, optional
+        Keep only every ``stride``-th row of each trajectory (default 1, i.e.
+        keep everything). The final row is always retained so that the
+        transition/censoring time of each trajectory is preserved exactly. Use
+        this to thin very finely-printed COLVAR files (e.g. a bias written every
+        step) down to a spacing that still resolves the bias evolution, which
+        speeds up the exponential-average and bootstrap steps substantially.
 
     Returns
     -------
@@ -154,6 +164,18 @@ def get_data(colvars, time_col, bias_col, acc_col=None, maxbias_col=None, time_s
     """
     if len(colvars) == 0:
         sys.exit(f"ERROR: No COLVAR files provided.")
+    if stride < 1:
+        raise ValueError(f"stride must be a positive integer, got {stride}")
+
+    def _subsample(traj):
+        # Keep every stride-th row, but always retain the final row so the
+        # trajectory's true final (transition) time is preserved.
+        if stride <= 1 or len(traj) <= 1:
+            return traj
+        keep = list(range(0, len(traj), stride))
+        if keep[-1] != len(traj) - 1:
+            keep.append(len(traj) - 1)
+        return traj[keep]
 
     def _load_one(colvar):
         if acc_col is None and maxbias_col is None:
@@ -172,7 +194,7 @@ def get_data(colvars, time_col, bias_col, acc_col=None, maxbias_col=None, time_s
         if work_col is not None:
             work = _loadtxt_with_optional_header(colvar, (work_col,))
             traj = np.hstack([traj, work.reshape(-1, 1).astype(float)])
-        return traj
+        return _subsample(traj)
 
     def _load_safe(colvar):
         try:
