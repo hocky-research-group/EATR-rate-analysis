@@ -114,6 +114,22 @@ Important arguments:
   Acceleration-factor column index if present.
 - `--mcol`
   Max-bias column index if present.
+- `--stride`
+  Keep only every Nth row of each COLVAR file (default `1`, keep everything).
+  The first and last rows are always kept, so each trajectory's transition
+  (or censoring) time is preserved exactly. Use this to thin very finely
+  printed COLVAR files; it speeds up the exponential-average and bootstrap
+  steps roughly in proportion to the thinning.
+- `--subsample-min-points`
+  Floor on the rows kept per trajectory when `--stride` is used (default `0`,
+  no floor). The stride is reduced until even the *shortest* trajectory keeps
+  this many rows, and that one stride is then applied to every trajectory.
+  **Use this whenever trajectory lengths vary** — see
+  [Subsampling long COLVAR files](#subsampling-long-colvar-files).
+- `--cdf-weights`
+  Weighting for CDF least-squares fits: `none` (default, unweighted) or
+  `binomial`, which weights each empirical-CDF point by its sampling standard
+  deviation `sqrt(F(1-F))`. See [Weighted CDF fitting](#weighted-cdf-fitting).
 - `--logfiles`, `--maxlen`, `--maxtime`, `--numevents`
   Ways to determine which runs actually transitioned. Use exactly one when not all trajectories transition.
 - `--logfiles-glob`
@@ -200,6 +216,10 @@ Important arguments:
   Unit and temperature handling, as in `eatr-analysis`.
 - `--tcol`, `--vcol`, `--acol`
   Time, bias, and optional acceleration columns.
+- `--stride`, `--subsample-min-points`, `--cdf-weights`
+  COLVAR subsampling and CDF-fit weighting, exactly as in `eatr-analysis`. See
+  [Subsampling long COLVAR files](#subsampling-long-colvar-files) and
+  [Weighted CDF fitting](#weighted-cdf-fitting).
 - `--threads`
   Run independent set/bootstrap work in parallel.
 
@@ -299,6 +319,84 @@ eatr-analysis-plot flooding \
   --truerate 1.23 \
   -o opes_figures
 ```
+
+## Subsampling long COLVAR files
+
+COLVAR files printed at a fine stride can be very large (tens of thousands of
+rows per trajectory), and the EATR exponential average and its bootstrap scale
+with the total number of rows. `--stride N` thins them; the first and last rows
+of every trajectory are always kept, so transition and censoring times are
+preserved exactly.
+
+**A fixed `--stride` alone is unsafe when trajectory lengths vary.** Fast bias
+deposition makes transitions happen sooner, so those trajectories are *short*,
+and the stride chosen for the long ones can leave only a couple of rows. The
+cumulative-hazard integral then degenerates into a staircase and the fit fails —
+often dramatically, and without any error being raised. A real example
+(protein G, fraction of native contacts, 1 ps hill spacing, 831 rows per
+trajectory, true value ln k0 = 14.15):
+
+| setting | rows kept | fitted ln k0 | KS |
+| --- | --- | --- | --- |
+| `--stride 1000` | 2 | 20.4 | 0.83 |
+| `--stride 1000 --subsample-min-points 200` | ~208 | 13.5 | 0.09 |
+
+`--subsample-min-points N` lowers the stride until even the shortest trajectory
+retains `N` rows, and applies that single stride to all of them. The stride
+must stay uniform because the analysis aligns trajectories by row index and
+builds one time axis from the first trajectory's spacing; thinning trajectories
+by different amounts would silently misalign the bias matrix.
+
+A few hundred points per trajectory is ample — in a stride scan the fitted rate
+was flat from full resolution down to roughly 20-40 points per trajectory and
+only degraded below about 10. `--subsample-min-points 200` is a good default:
+
+```bash
+eatr-analysis -g 'run_*/metad.colvar' --logfiles-glob 'run_*/p.log' \
+  --temp 312 --stride 1000 --subsample-min-points 200 -E
+```
+
+Note that the floor is set by the *shortest* trajectory in the set, so a single
+early-transitioning run forces finer resolution (and more compute) for all of
+them. That is the safe behaviour: early transitions are exactly what the
+short-time part of the CDF depends on.
+
+## Weighted CDF fitting
+
+The CDF estimators fit the model to an empirical CDF by least squares. By
+default every quantile is weighted equally, even though an ECDF point has
+sampling variance `F(1-F)/N`, so the middle of the distribution is the noisiest
+part. `--cdf-weights binomial` supplies `sigma = sqrt(F(1-F))` to the fit
+instead. The default remains `none`, which reproduces the historical unweighted
+fit exactly.
+
+Benchmarked against known reference rates (protein G, `k_true = 1.4/us`), mean
+`|ln k0 - ln k_true|` for the **EATR CDF** estimator over fast-deposition paces:
+
+| data set | `none` | `binomial` |
+| --- | --- | --- |
+| biased on native contacts | 1.22 | 0.82 |
+| biased on end-to-end distance | 1.40 | 1.21 |
+| published Q data (held out) | 1.25 | 0.50 |
+| published Ree data (held out) | 1.44 | 1.02 |
+
+Slow-deposition paces improved in all four sets as well, so this is not a
+trade-off between regimes.
+
+Guidance:
+
+- Recommended for **EATR**, where it helps most. EATR fits two parameters, and
+  `gamma` sets the *shape* of the hazard, so how the quantiles are weighted
+  changes the inferred `gamma` and hence `k0`.
+- **Not** recommended for **iMetaD**, which fits `k` alone: the effect there is
+  in the third decimal and was marginally worse on slow paces in three of the
+  four sets. The option is accepted so all estimators behave consistently.
+- `KTR` accepts the option but has not been benchmarked with it.
+
+Whenever `--stride`, `--subsample-min-points` or `--cdf-weights` are set to a
+non-default value they are recorded in the output JSON, so a result carries the
+settings that produced it. Results generated with different settings are not
+directly comparable.
 
 ## Config-Driven Dataset Scripts
 
