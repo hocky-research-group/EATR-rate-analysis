@@ -32,25 +32,53 @@ except:
 warnings.filterwarnings('ignore')
 
 
-def _curve_fit_lenient(func, x, y, p0, bounds, max_nfev=None):
+def ecdf_sigma(ecdfy, weights="none"):
+    """Per-point sigma for a CDF least-squares fit against an empirical CDF.
+
+    ``"none"`` (default) returns None, i.e. an unweighted fit -- the historical
+    behaviour. ``"binomial"`` returns sqrt(F(1-F)), the sampling standard
+    deviation of an empirical CDF value, so the fit weights each quantile by how
+    well determined it is instead of treating all quantiles equally. The
+    variance is clipped away from zero so the extreme quantiles, where
+    F(1-F) -> 0, cannot dominate.
+    """
+    if weights in (None, "none"):
+        return None
+    if weights != "binomial":
+        raise ValueError(f"unknown cdf weights {weights!r} (expected 'none' or 'binomial')")
+    y = np.asarray(ecdfy, dtype=float)
+    return np.sqrt(np.clip(y * (1.0 - y), 1e-3, None))
+
+
+def _curve_fit_lenient(func, x, y, p0, bounds, max_nfev=None, sigma=None):
     """Like curve_fit but returns (popt, converged: bool) and never raises.
 
     - OptimizeWarning (max iterations reached): returns params + converged=False.
     - RuntimeError (complete failure): falls back to least_squares for the best
       iterate, returns it + converged=False.
+
+    ``sigma`` is passed through to curve_fit (per-point standard deviations, so
+    residuals are divided by it); None keeps the fit unweighted.
     """
     from scipy.optimize import OptimizeWarning, least_squares as _ls
+    # kwargs are shared by curve_fit and the least_squares fallback, so sigma
+    # (curve_fit-only) is applied separately -- in the fallback by scaling the
+    # residuals, which is exactly what curve_fit's sigma does.
     kwargs = {} if max_nfev is None else {"max_nfev": max_nfev}
+    fit_kwargs = dict(kwargs)
+    if sigma is not None:
+        fit_kwargs["sigma"] = sigma
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         try:
-            popt = optimize.curve_fit(func, x, y, p0=p0, bounds=bounds, **kwargs)[0]
+            popt = optimize.curve_fit(func, x, y, p0=p0, bounds=bounds, **fit_kwargs)[0]
             converged = not any(issubclass(w.category, OptimizeWarning) for w in caught)
             return popt, converged
         except RuntimeError:
             p0_arr = np.atleast_1d(np.asarray(p0, dtype=float))
+            scale = 1.0 if sigma is None else np.asarray(sigma, dtype=float)
             def residuals(params):
-                return func(x, *params) - y
+                return (func(x, *params) - y) / scale
             res = _ls(residuals, p0_arr, bounds=bounds, **kwargs)
             return res.x, False
 
@@ -424,7 +452,7 @@ def iMetaD_leastsq_cost(k, t, ecdfy):
     sse = np.square(ecdfy-f).sum() # Sum of Squared Errors
     return sse
 
-def iMetaD_FitCDF(data, beta, event=None, bias_shift=0.0, k_bounds=(-np.inf,np.inf), k_guess=None, require_convergence=False):
+def iMetaD_FitCDF(data, beta, event=None, bias_shift=0.0, k_bounds=(-np.inf,np.inf), k_guess=None, require_convergence=False, cdf_weights="none"):
     if event is None:
         event = _default_event(data) # Assume all simulations transition unless told otherwise
     times = iMetaD_rescaled_times(data, beta, bias_shift=bias_shift)
@@ -436,12 +464,12 @@ def iMetaD_FitCDF(data, beta, event=None, bias_shift=0.0, k_bounds=(-np.inf,np.i
     if k_guess is None:
         k_guess = event.sum() / np.sum(times) # Use maximum likelihood estimate as initial guess if the guess is not provided
 
-    popt, converged = _curve_fit_lenient(lambda k,t:1-np.exp(-k*t), ecdfx, ecdfy, p0=k_guess, bounds=k_bounds)
+    popt, converged = _curve_fit_lenient(lambda k,t:1-np.exp(-k*t), ecdfx, ecdfy, p0=k_guess, bounds=k_bounds, sigma=ecdf_sigma(ecdfy, cdf_weights))
     if require_convergence and not converged:
         raise RuntimeError("iMetaD CDF fit did not converge to tolerance")
     return popt[0], converged
 
-def iMetaD_FitCDF_times(times, event=None, k_bounds=(-np.inf,np.inf), k_guess=None, require_convergence=False):
+def iMetaD_FitCDF_times(times, event=None, k_bounds=(-np.inf,np.inf), k_guess=None, require_convergence=False, cdf_weights="none"):
     if event is None:
         event = _default_event(times) # Assume all simulations transition unless told otherwise
 
@@ -452,7 +480,7 @@ def iMetaD_FitCDF_times(times, event=None, k_bounds=(-np.inf,np.inf), k_guess=No
     if k_guess is None:
         k_guess = event.sum() / np.sum(times) # Use maximum likelihood estimate as initial guess if the guess is not provided
 
-    popt, converged = _curve_fit_lenient(lambda k,t:1-np.exp(-k*t), ecdfx, ecdfy, p0=k_guess, bounds=k_bounds)
+    popt, converged = _curve_fit_lenient(lambda k,t:1-np.exp(-k*t), ecdfx, ecdfy, p0=k_guess, bounds=k_bounds, sigma=ecdf_sigma(ecdfy, cdf_weights))
     if require_convergence and not converged:
         raise RuntimeError("iMetaD CDF fit did not converge to tolerance")
     return popt[0], converged
@@ -600,7 +628,7 @@ def KTR_MLE_rate_VMB(vmb_average, final_time_indices, event=None, gamma_bounds=(
     return np.array([k0, gamma])
 
 # KTR Get CDF rate estimate (directly from trajectory data)
-def KTR_CDF_rate(data, beta, event=None, k_bounds=(-np.inf,np.inf), gamma_bounds=(0.,1.), cores=1, logTrick=False, init_guess=[None,None], reg_lambda=0.0, kIMD=1.0, do_bopt=False, bias_shift=0.0, require_convergence=False):
+def KTR_CDF_rate(data, beta, event=None, k_bounds=(-np.inf,np.inf), gamma_bounds=(0.,1.), cores=1, logTrick=False, init_guess=[None,None], reg_lambda=0.0, kIMD=1.0, do_bopt=False, bias_shift=0.0, require_convergence=False, cdf_weights="none"):
 
     # Get Vmb(t) and final_time_indices
     vmb_average = avg_max_bias(data, beta, bias_shift=bias_shift)
@@ -620,7 +648,7 @@ def KTR_CDF_rate(data, beta, event=None, k_bounds=(-np.inf,np.inf), gamma_bounds
         }
         if reg_lambda == 0:
             cdf = lambda time_indices, k0, gamma: KTR_CDF(time_indices, k0, gamma, vmb_average, cores=cores, logTrick=logTrick)
-            cdf_result, converged = _curve_fit_lenient(cdf, ecdfx_indices, ecdfy, p0=init_guess, bounds=([k_bounds[0],gamma_bounds[0]],[k_bounds[1],gamma_bounds[1]]), max_nfev=100000*len(ecdfy))
+            cdf_result, converged = _curve_fit_lenient(cdf, ecdfx_indices, ecdfy, p0=init_guess, bounds=([k_bounds[0],gamma_bounds[0]],[k_bounds[1],gamma_bounds[1]]), max_nfev=100000*len(ecdfy), sigma=ecdf_sigma(ecdfy, cdf_weights))
         else:
             leastsq = lambda params: KTR_leastsq_cost(params, ecdfx_indices, ecdfy, vmb_average, cores=cores, logTrick=logTrick, reg_lambda=reg_lambda, kIMD=kIMD)
             cdf_result = optimize.minimize(leastsq,init_guess,options=options).x
@@ -643,7 +671,7 @@ def KTR_CDF_rate(data, beta, event=None, k_bounds=(-np.inf,np.inf), gamma_bounds
     return cdf_result, converged
 
 # KTR Get CDF rate estimate (with precomputed Vmb(t) and ti indices)
-def KTR_CDF_rate_VMB(vmb_average, final_time_indices, event=None, k_bounds=(-np.inf,np.inf), gamma_bounds=(0.,1.), cores=1, logTrick=False, init_guess=[None,None], reg_lambda=0.0, kIMD=None, do_bopt=False, require_convergence=False):
+def KTR_CDF_rate_VMB(vmb_average, final_time_indices, event=None, k_bounds=(-np.inf,np.inf), gamma_bounds=(0.,1.), cores=1, logTrick=False, init_guess=[None,None], reg_lambda=0.0, kIMD=None, do_bopt=False, require_convergence=False, cdf_weights="none"):
 
     if event is None:
         event = _default_event(final_time_indices)
@@ -662,7 +690,7 @@ def KTR_CDF_rate_VMB(vmb_average, final_time_indices, event=None, k_bounds=(-np.
         }
         if reg_lambda == 0:
             cdf = lambda time_indices, k0, gamma: KTR_CDF(time_indices, k0, gamma, vmb_average, cores=cores, logTrick=logTrick)
-            cdf_result, converged = _curve_fit_lenient(cdf, ecdfx_indices, ecdfy, p0=init_guess, bounds=([k_bounds[0],gamma_bounds[0]],[k_bounds[1],gamma_bounds[1]]), max_nfev=100000*len(ecdfy))
+            cdf_result, converged = _curve_fit_lenient(cdf, ecdfx_indices, ecdfy, p0=init_guess, bounds=([k_bounds[0],gamma_bounds[0]],[k_bounds[1],gamma_bounds[1]]), max_nfev=100000*len(ecdfy), sigma=ecdf_sigma(ecdfy, cdf_weights))
         else:
             leastsq = lambda params: KTR_leastsq_cost(params, ecdfx_indices, ecdfy, vmb_average, cores=cores, logTrick=logTrick, reg_lambda=reg_lambda, kIMD=kIMD)
             cdf_result = optimize.minimize(leastsq,init_guess,options=options).x
@@ -793,7 +821,7 @@ def EATR_MLE_rate(data, beta, event=None, gamma_bounds=(0.,1.), cores=1, logTric
     return np.array([k0, gamma])
 
 # EATR Get CDF rate estimate (directly from trajectory data) (cannot precompute ln<e^γβV> because that depends on γ.)
-def EATR_CDF_rate(data, beta, event=None, k_bounds=(0.,np.inf), gamma_bounds=(0.,1.), cores=1, init_guess=[None,None], logTrick=False, reg_lambda=0.0, kIMD=1.0, do_bopt=False, bias_shift=0.0, require_convergence=False):
+def EATR_CDF_rate(data, beta, event=None, k_bounds=(0.,np.inf), gamma_bounds=(0.,1.), cores=1, init_guess=[None,None], logTrick=False, reg_lambda=0.0, kIMD=1.0, do_bopt=False, bias_shift=0.0, require_convergence=False, cdf_weights="none"):
 
     # Get final_time_indices
     final_time_indices = np.array([int(len(traj)-1) for traj in data])
@@ -841,7 +869,7 @@ def EATR_CDF_rate(data, beta, event=None, k_bounds=(0.,np.inf), gamma_bounds=(0.
                 "maxiter":100000*len(ecdfy)
         }
         if reg_lambda == 0.0:
-            cdf_result, converged = _curve_fit_lenient(cdf, ecdfx_indices, ecdfy, p0=init_guess, bounds=([k_bounds[0],gamma_bounds[0]],[k_bounds[1],gamma_bounds[1]]), max_nfev=100000*len(ecdfy))
+            cdf_result, converged = _curve_fit_lenient(cdf, ecdfx_indices, ecdfy, p0=init_guess, bounds=([k_bounds[0],gamma_bounds[0]],[k_bounds[1],gamma_bounds[1]]), max_nfev=100000*len(ecdfy), sigma=ecdf_sigma(ecdfy, cdf_weights))
         else:
             cdf_result = optimize.minimize(get_cost,init_guess,options=options).x
             converged = True

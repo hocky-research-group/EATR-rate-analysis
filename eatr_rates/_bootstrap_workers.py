@@ -30,6 +30,7 @@ class IMetaDCDFConfig:
     k_bounds: tuple
     k_guess: float | None
     require_convergence: bool = False
+    cdf_weights: str = "none"
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,7 @@ class KTRCDFConfig:
     do_bopt: bool
     bias_shift: float
     require_convergence: bool = False
+    cdf_weights: str = "none"
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,7 @@ class EATRCDFConfig:
     do_bopt: bool
     bias_shift: float
     require_convergence: bool = False
+    cdf_weights: str = "none"
 
 
 def _run_worker(task):
@@ -107,7 +110,7 @@ def _run_worker(task):
                                  bias_shift=config.bias_shift)
 
     if isinstance(config, IMetaDCDFConfig):
-        k, converged = RM.iMetaD_FitCDF(resample, config.beta, event=eve,
+        k, converged = RM.iMetaD_FitCDF(resample, config.beta, event=eve, cdf_weights=config.cdf_weights,
                                          bias_shift=config.bias_shift,
                                          k_bounds=config.k_bounds,
                                          k_guess=config.k_guess,
@@ -122,7 +125,7 @@ def _run_worker(task):
                                 bias_shift=config.bias_shift)
 
     if isinstance(config, KTRCDFConfig):
-        result, converged = RM.KTR_CDF_rate(resample, config.beta, event=eve,
+        result, converged = RM.KTR_CDF_rate(resample, config.beta, event=eve, cdf_weights=config.cdf_weights,
                                               k_bounds=config.k_bounds,
                                               gamma_bounds=config.gamma_bounds,
                                               logTrick=config.log_trick,
@@ -140,7 +143,7 @@ def _run_worker(task):
                                   bias_shift=config.bias_shift)
 
     if isinstance(config, EATRCDFConfig):
-        result, converged = RM.EATR_CDF_rate(resample, config.beta, event=eve,
+        result, converged = RM.EATR_CDF_rate(resample, config.beta, event=eve, cdf_weights=config.cdf_weights,
                                                k_bounds=config.k_bounds,
                                                gamma_bounds=config.gamma_bounds,
                                                logTrick=config.log_trick,

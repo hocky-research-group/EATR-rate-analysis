@@ -91,6 +91,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--acol", type=int, default=None, help="the acceleration factor column index in the COLVAR file, if present. (DEFAULT: None)")
     parser.add_argument("--mcol", type=int, default=None, help="the max bias column index in the COLVAR file, if present. (DEFAULT: None)")
     parser.add_argument("--stride", type=int, default=1, help="keep only every Nth row of each COLVAR (the final row is always kept). Use to thin finely-printed COLVAR files for speed. (DEFAULT: 1)")
+    parser.add_argument("--cdf-weights", choices=["none","binomial"], default="none", dest="cdf_weights", help="weighting for CDF least-squares fits (iMetaD/KTR/EATR). 'none' (default) is the historical unweighted fit; 'binomial' weights each empirical-CDF point by its sampling std sqrt(F(1-F)), which is typically more accurate at fast bias-deposition. (DEFAULT: none)")
     parser.add_argument("--subsample-min-points", type=int, default=0, dest="subsample_min_points", help="when using --stride, reduce the stride so even the shortest trajectory keeps at least this many rows (one uniform stride is used for all trajectories). Protects short, fast-transitioning runs from being over-thinned. (DEFAULT: 0, no floor)")
     parser.add_argument(
         "--timeunit",
@@ -347,6 +348,14 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
     plot_time_unit, _, _ = resolve_time_unit(args.plot_time_unit)
     run = AnalysisResult(beta=beta, data=[], event=np.array([]))
     run.results["plot_time_unit"] = plot_time_unit
+    # Record the subsampling/fitting options so a JSON is self-describing:
+    # results produced with different settings are not directly comparable.
+    if args.stride != 1:
+        run.results["stride"] = args.stride
+    if args.subsample_min_points:
+        run.results["subsample_min_points"] = args.subsample_min_points
+    if args.cdf_weights != "none":
+        run.results["cdf_weights"] = args.cdf_weights
 
     gamma_bounds = (args.gammamin, args.gammamax)
     k_bounds = (np.exp(args.lnkmin), np.exp(args.lnkmax))
@@ -438,18 +447,18 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
 
     if args.imetadcdf:
         if not args.bootstrap:
-            k, converged = RM.iMetaD_FitCDF_times(rescaled_times, event=event, k_bounds=k_bounds, k_guess=init_guess[0], require_convergence=args.require_convergence)
+            k, converged = RM.iMetaD_FitCDF_times(rescaled_times, event=event, k_bounds=k_bounds, k_guess=init_guess[0], require_convergence=args.require_convergence, cdf_weights=args.cdf_weights)
             run.results["iMetaD CDF ln k"] = np.log(k)
             run.results["iMetaD CDF converged"] = converged
         else:
             if use_scipy_bootstrap:
                 indices = list(range(len(data)))
-                k, converged = RM.iMetaD_FitCDF_times(rescaled_times, event=event, k_bounds=k_bounds, k_guess=init_guess[0], require_convergence=args.require_convergence)
+                k, converged = RM.iMetaD_FitCDF_times(rescaled_times, event=event, k_bounds=k_bounds, k_guess=init_guess[0], require_convergence=args.require_convergence, cdf_weights=args.cdf_weights)
                 run.results["iMetaD CDF ln k"] = np.log(k)
                 run.results["iMetaD CDF converged"] = converged
                 _imetad_cdf_boot_convergence: list[bool] = []
                 def _imetad_cdf_scipy_boot(idxs):
-                    k_b, conv_b = RM.iMetaD_FitCDF([data[idx] for idx in idxs], beta, event=np.array([event[idx] for idx in idxs]), bias_shift=args.barrier, k_bounds=k_bounds, k_guess=init_guess[0], require_convergence=args.require_convergence)
+                    k_b, conv_b = RM.iMetaD_FitCDF([data[idx] for idx in idxs], beta, event=np.array([event[idx] for idx in idxs]), bias_shift=args.barrier, k_bounds=k_bounds, k_guess=init_guess[0], require_convergence=args.require_convergence, cdf_weights=args.cdf_weights)
                     _imetad_cdf_boot_convergence.append(conv_b)
                     return np.log(k_b)
                 res = bootstr(
@@ -462,7 +471,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
                 run.results["iMetaD CDF ln k CI"] = res.confidence_interval
                 run.results["iMetaD CDF n_unconverged_boots"] = _imetad_cdf_boot_convergence.count(False)
             elif use_threaded_bootstrap:
-                raw = threaded_bootstrap(data, IMetaDCDFConfig(beta=beta, bias_shift=args.barrier, k_bounds=k_bounds, k_guess=init_guess[0], require_convergence=args.require_convergence), args.numboots, event=event, seed=seed, threads=args.threads)
+                raw = threaded_bootstrap(data, IMetaDCDFConfig(beta=beta, bias_shift=args.barrier, k_bounds=k_bounds, k_guess=init_guess[0], require_convergence=args.require_convergence, cdf_weights=args.cdf_weights), args.numboots, event=event, seed=seed, threads=args.threads)
                 k_sample = raw[:, 0]
                 log_sample = np.log(k_sample)
                 run.results["iMetaD CDF ln k"] = float(np.mean(log_sample))
@@ -472,7 +481,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
             else:
                 _imetad_cdf_conv: list[bool] = []
                 def _imetad_cdf_boot(subset, eve):
-                    k_b, conv_b = RM.iMetaD_FitCDF(subset, beta, event=eve, bias_shift=args.barrier, k_guess=init_guess[0], require_convergence=args.require_convergence)
+                    k_b, conv_b = RM.iMetaD_FitCDF(subset, beta, event=eve, bias_shift=args.barrier, k_guess=init_guess[0], require_convergence=args.require_convergence, cdf_weights=args.cdf_weights)
                     _imetad_cdf_conv.append(conv_b)
                     return k_b
                 sample = RM.bootstrap(data, _imetad_cdf_boot, args.numboots, event=event, return_stat=True, seed=seed)
@@ -533,20 +542,20 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
 
     if args.ktrcdf:
         if not args.bootstrap:
-            result, converged = RM.KTR_CDF_rate_VMB(vmb_average, final_time_indices, event=event, k_bounds=k_bounds, gamma_bounds=gamma_bounds, logTrick=args.logtrick, init_guess=init_guess, do_bopt=args.bayesopt, require_convergence=args.require_convergence)
+            result, converged = RM.KTR_CDF_rate_VMB(vmb_average, final_time_indices, event=event, k_bounds=k_bounds, gamma_bounds=gamma_bounds, logTrick=args.logtrick, init_guess=init_guess, do_bopt=args.bayesopt, require_convergence=args.require_convergence, cdf_weights=args.cdf_weights)
             run.results["KTR CDF ln k"] = np.log(result[0])
             run.results["KTR CDF gamma"] = result[1]
             run.results["KTR CDF converged"] = converged
         else:
             if use_scipy_bootstrap:
                 indices = list(range(len(data)))
-                result, converged = RM.KTR_CDF_rate_VMB(vmb_average, final_time_indices, event=event, k_bounds=k_bounds, gamma_bounds=gamma_bounds, logTrick=args.logtrick, init_guess=init_guess, do_bopt=args.bayesopt, require_convergence=args.require_convergence)
+                result, converged = RM.KTR_CDF_rate_VMB(vmb_average, final_time_indices, event=event, k_bounds=k_bounds, gamma_bounds=gamma_bounds, logTrick=args.logtrick, init_guess=init_guess, do_bopt=args.bayesopt, require_convergence=args.require_convergence, cdf_weights=args.cdf_weights)
                 run.results["KTR CDF ln k"] = np.log(result[0])
                 run.results["KTR CDF gamma"] = result[1]
                 run.results["KTR CDF converged"] = converged
                 _ktr_cdf_conv: list[bool] = []
                 def _ktr_cdf_scipy_boot(idxs):
-                    r, conv_b = RM.KTR_CDF_rate([data[idx] for idx in idxs], beta, event=np.array([event[idx] for idx in idxs]), k_bounds=k_bounds, gamma_bounds=gamma_bounds, logTrick=args.logtrick, init_guess=init_guess, do_bopt=args.bayesopt, bias_shift=args.barrier, require_convergence=args.require_convergence)
+                    r, conv_b = RM.KTR_CDF_rate([data[idx] for idx in idxs], beta, event=np.array([event[idx] for idx in idxs]), k_bounds=k_bounds, gamma_bounds=gamma_bounds, logTrick=args.logtrick, init_guess=init_guess, do_bopt=args.bayesopt, bias_shift=args.barrier, require_convergence=args.require_convergence, cdf_weights=args.cdf_weights)
                     _ktr_cdf_conv.append(conv_b)
                     return r
                 res = bootstr(
@@ -560,7 +569,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
                 run.results["KTR CDF gamma CI"] = [res.confidence_interval.low[1], res.confidence_interval.high[1]]
                 run.results["KTR CDF n_unconverged_boots"] = _ktr_cdf_conv.count(False)
             elif use_threaded_bootstrap:
-                raw = threaded_bootstrap(data, KTRCDFConfig(beta=beta, k_bounds=k_bounds, gamma_bounds=gamma_bounds, log_trick=args.logtrick, init_guess=tuple(init_guess), do_bopt=args.bayesopt, bias_shift=args.barrier, require_convergence=args.require_convergence), args.numboots, event=event, double=True, seed=seed, threads=args.threads)
+                raw = threaded_bootstrap(data, KTRCDFConfig(beta=beta, k_bounds=k_bounds, gamma_bounds=gamma_bounds, log_trick=args.logtrick, init_guess=tuple(init_guess), do_bopt=args.bayesopt, bias_shift=args.barrier, require_convergence=args.require_convergence, cdf_weights=args.cdf_weights), args.numboots, event=event, double=True, seed=seed, threads=args.threads)
                 run.results["KTR CDF ln k"] = float(np.mean(np.log(raw[:, 0])))
                 run.results["KTR CDF gamma"] = float(np.mean(raw[:, 1]))
                 run.results["KTR CDF ln k CI"] = percentile_interval(np.log(raw[:, 0]))
@@ -570,7 +579,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
             else:
                 _ktr_cdf_conv2: list[bool] = []
                 def _ktr_cdf_boot(subset, eve):
-                    r, conv_b = RM.KTR_CDF_rate(subset, beta, event=eve, k_bounds=k_bounds, gamma_bounds=gamma_bounds, logTrick=args.logtrick, init_guess=init_guess, do_bopt=args.bayesopt, bias_shift=args.barrier, require_convergence=args.require_convergence)
+                    r, conv_b = RM.KTR_CDF_rate(subset, beta, event=eve, k_bounds=k_bounds, gamma_bounds=gamma_bounds, logTrick=args.logtrick, init_guess=init_guess, do_bopt=args.bayesopt, bias_shift=args.barrier, require_convergence=args.require_convergence, cdf_weights=args.cdf_weights)
                     _ktr_cdf_conv2.append(conv_b)
                     return r
                 sample = RM.bootstrap(data, _ktr_cdf_boot, args.numboots, double=True, event=event, return_stat=True, seed=seed)
@@ -627,20 +636,20 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
 
     if args.eatrcdf:
         if not args.bootstrap:
-            result, converged = RM.EATR_CDF_rate(data, beta, event=event, k_bounds=k_bounds, gamma_bounds=gamma_bounds, init_guess=init_guess, logTrick=args.logtrick, do_bopt=args.bayesopt, bias_shift=args.barrier, require_convergence=args.require_convergence)
+            result, converged = RM.EATR_CDF_rate(data, beta, event=event, k_bounds=k_bounds, gamma_bounds=gamma_bounds, init_guess=init_guess, logTrick=args.logtrick, do_bopt=args.bayesopt, bias_shift=args.barrier, require_convergence=args.require_convergence, cdf_weights=args.cdf_weights)
             run.results["EATR CDF ln k"] = np.log(result[0])
             run.results["EATR CDF gamma"] = result[1]
             run.results["EATR CDF converged"] = converged
         else:
             if use_scipy_bootstrap:
                 indices = list(range(len(data)))
-                result, converged = RM.EATR_CDF_rate(data, beta, event=event, k_bounds=k_bounds, gamma_bounds=gamma_bounds, init_guess=init_guess, logTrick=args.logtrick, do_bopt=args.bayesopt, bias_shift=args.barrier, require_convergence=args.require_convergence)
+                result, converged = RM.EATR_CDF_rate(data, beta, event=event, k_bounds=k_bounds, gamma_bounds=gamma_bounds, init_guess=init_guess, logTrick=args.logtrick, do_bopt=args.bayesopt, bias_shift=args.barrier, require_convergence=args.require_convergence, cdf_weights=args.cdf_weights)
                 run.results["EATR CDF ln k"] = np.log(result[0])
                 run.results["EATR CDF gamma"] = result[1]
                 run.results["EATR CDF converged"] = converged
                 _eatr_cdf_conv: list[bool] = []
                 def _eatr_cdf_scipy_boot(idxs):
-                    r, conv_b = RM.EATR_CDF_rate([data[idx] for idx in idxs], beta, event=np.array([event[idx] for idx in idxs]), k_bounds=k_bounds, gamma_bounds=gamma_bounds, init_guess=init_guess, logTrick=args.logtrick, do_bopt=args.bayesopt, bias_shift=args.barrier, require_convergence=args.require_convergence)
+                    r, conv_b = RM.EATR_CDF_rate([data[idx] for idx in idxs], beta, event=np.array([event[idx] for idx in idxs]), k_bounds=k_bounds, gamma_bounds=gamma_bounds, init_guess=init_guess, logTrick=args.logtrick, do_bopt=args.bayesopt, bias_shift=args.barrier, require_convergence=args.require_convergence, cdf_weights=args.cdf_weights)
                     _eatr_cdf_conv.append(conv_b)
                     return r
                 res = bootstr(
@@ -654,7 +663,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
                 run.results["EATR CDF gamma CI"] = [res.confidence_interval.low[1], res.confidence_interval.high[1]]
                 run.results["EATR CDF n_unconverged_boots"] = _eatr_cdf_conv.count(False)
             elif use_threaded_bootstrap:
-                raw = threaded_bootstrap(data, EATRCDFConfig(beta=beta, k_bounds=k_bounds, gamma_bounds=gamma_bounds, log_trick=args.logtrick, init_guess=tuple(init_guess), do_bopt=args.bayesopt, bias_shift=args.barrier, require_convergence=args.require_convergence), args.numboots, event=event, double=True, seed=seed, threads=args.threads)
+                raw = threaded_bootstrap(data, EATRCDFConfig(beta=beta, k_bounds=k_bounds, gamma_bounds=gamma_bounds, log_trick=args.logtrick, init_guess=tuple(init_guess), do_bopt=args.bayesopt, bias_shift=args.barrier, require_convergence=args.require_convergence, cdf_weights=args.cdf_weights), args.numboots, event=event, double=True, seed=seed, threads=args.threads)
                 run.results["EATR CDF ln k"] = float(np.mean(np.log(raw[:, 0])))
                 run.results["EATR CDF gamma"] = float(np.mean(raw[:, 1]))
                 run.results["EATR CDF ln k CI"] = percentile_interval(np.log(raw[:, 0]))
@@ -664,7 +673,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
             else:
                 _eatr_cdf_conv2: list[bool] = []
                 def _eatr_cdf_boot(subset, eve):
-                    r, conv_b = RM.EATR_CDF_rate(subset, beta, event=eve, k_bounds=k_bounds, gamma_bounds=gamma_bounds, init_guess=init_guess, logTrick=args.logtrick, do_bopt=args.bayesopt, bias_shift=args.barrier, require_convergence=args.require_convergence)
+                    r, conv_b = RM.EATR_CDF_rate(subset, beta, event=eve, k_bounds=k_bounds, gamma_bounds=gamma_bounds, init_guess=init_guess, logTrick=args.logtrick, do_bopt=args.bayesopt, bias_shift=args.barrier, require_convergence=args.require_convergence, cdf_weights=args.cdf_weights)
                     _eatr_cdf_conv2.append(conv_b)
                     return r
                 sample = RM.bootstrap(data, _eatr_cdf_boot, args.numboots, double=True, event=event, return_stat=True, seed=seed)
