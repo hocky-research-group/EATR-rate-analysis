@@ -91,6 +91,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--acol", type=int, default=None, help="the acceleration factor column index in the COLVAR file, if present. (DEFAULT: None)")
     parser.add_argument("--mcol", type=int, default=None, help="the max bias column index in the COLVAR file, if present. (DEFAULT: None)")
     parser.add_argument("--stride", type=int, default=1, help="keep only every Nth row of each COLVAR (the final row is always kept). Use to thin finely-printed COLVAR files for speed. (DEFAULT: 1)")
+    parser.add_argument("--subsample-min-points", type=int, default=0, dest="subsample_min_points", help="when using --stride, reduce the stride so even the shortest trajectory keeps at least this many rows (one uniform stride is used for all trajectories). Protects short, fast-transitioning runs from being over-thinned. (DEFAULT: 0, no floor)")
     parser.add_argument(
         "--timeunit",
         type=np.float64,
@@ -373,7 +374,7 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
         logfiles = list(args.logfiles or []) + _expand_globs(args.logfiles_glob)
     else:
         logfiles = list(args.logfiles) if args.logfiles else None
-    data, skipped = RM.get_data(input_files, args.tcol, args.vcol, acc_col=args.acol, maxbias_col=args.mcol, time_scale_factor=args.timeunit, threads=args.threads, stride=args.stride)
+    data, skipped = RM.get_data(input_files, args.tcol, args.vcol, acc_col=args.acol, maxbias_col=args.mcol, time_scale_factor=args.timeunit, threads=args.threads, stride=args.stride, subsample_min_points=args.subsample_min_points)
     if skipped:
         for idx in skipped:
             add_message(run, f"WARNING: skipping unreadable COLVAR file: {input_files[idx]}")

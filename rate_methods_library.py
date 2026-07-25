@@ -140,7 +140,7 @@ def _cum_hazards_ktr(vmb_average, gamma, final_time_indices, logTrick=False):
 # [t2 V2 acc2 Vm2],
 # ...
 # ]
-def get_data(colvars, time_col, bias_col, acc_col=None, maxbias_col=None, time_scale_factor=1.0, threads=1, work_col=None, skip_errors=True, stride=1):  # Changed "file_format" to "colvars"
+def get_data(colvars, time_col, bias_col, acc_col=None, maxbias_col=None, time_scale_factor=1.0, threads=1, work_col=None, skip_errors=True, stride=1, subsample_min_points=0):  # Changed "file_format" to "colvars"
     """Load trajectory data from COLVAR files.
 
     Parameters
@@ -152,6 +152,28 @@ def get_data(colvars, time_col, bias_col, acc_col=None, maxbias_col=None, time_s
         this to thin very finely-printed COLVAR files (e.g. a bias written every
         step) down to a spacing that still resolves the bias evolution, which
         speeds up the exponential-average and bootstrap steps substantially.
+    subsample_min_points : int, optional
+        Floor on the number of rows retained per trajectory when subsampling
+        (default 0, i.e. no floor). The stride actually used is reduced so that
+        even the *shortest* trajectory keeps at least this many rows::
+
+            effective_stride = min(stride, shortest_trajectory // min_points)
+
+        and that one stride is applied to every trajectory.
+
+        Why this matters: a single global ``stride`` is unsafe when trajectory
+        lengths vary. Fast-deposition metadynamics runs transition quickly and
+        so are short, and striding them by the same factor used for long runs
+        can leave only a handful of rows, which turns the EATR cumulative-hazard
+        integral into a coarse staircase and corrupts the fit.
+
+        Why the stride must stay *uniform*: downstream, ``_build_v_data``
+        aligns trajectories by row index and builds a single time axis from the
+        spacing of the first trajectory, i.e. it assumes every trajectory shares
+        one time step. Thinning trajectories by different amounts would break
+        that alignment and silently corrupt the exponential average, so the
+        floor is applied globally (via the shortest trajectory) rather than
+        per trajectory.
 
     Returns
     -------
@@ -166,13 +188,15 @@ def get_data(colvars, time_col, bias_col, acc_col=None, maxbias_col=None, time_s
         sys.exit(f"ERROR: No COLVAR files provided.")
     if stride < 1:
         raise ValueError(f"stride must be a positive integer, got {stride}")
+    if subsample_min_points < 0:
+        raise ValueError(f"subsample_min_points must be non-negative, got {subsample_min_points}")
 
-    def _subsample(traj):
-        # Keep every stride-th row, but always retain the final row so the
+    def _subsample(traj, step):
+        # Keep every step-th row, but always retain the final row so the
         # trajectory's true final (transition) time is preserved.
-        if stride <= 1 or len(traj) <= 1:
+        if step <= 1 or len(traj) <= 1:
             return traj
-        keep = list(range(0, len(traj), stride))
+        keep = list(range(0, len(traj), step))
         if keep[-1] != len(traj) - 1:
             keep.append(len(traj) - 1)
         return traj[keep]
@@ -194,7 +218,7 @@ def get_data(colvars, time_col, bias_col, acc_col=None, maxbias_col=None, time_s
         if work_col is not None:
             work = _loadtxt_with_optional_header(colvar, (work_col,))
             traj = np.hstack([traj, work.reshape(-1, 1).astype(float)])
-        return _subsample(traj)
+        return traj
 
     def _load_safe(colvar):
         try:
@@ -224,6 +248,18 @@ def get_data(colvars, time_col, bias_col, acc_col=None, maxbias_col=None, time_s
             skipped.append(i)
         else:
             data.append(result)
+
+    # Subsample after loading, with ONE stride shared by every trajectory (see
+    # the subsample_min_points docstring: downstream code assumes a common time
+    # step). The floor is set by the shortest trajectory so that even the
+    # fastest-transitioning runs keep enough points to resolve the bias.
+    if stride > 1 and data:
+        step = stride
+        if subsample_min_points > 0:
+            shortest = min(len(traj) for traj in data)
+            step = min(step, max(1, shortest // subsample_min_points))
+        if step > 1:
+            data = [_subsample(traj, step) for traj in data]
     return data, skipped
 
 def check_acc_consistency(data, beta, rtol=2.0, n_sample=5):

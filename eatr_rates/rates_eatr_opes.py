@@ -135,6 +135,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--acol", type=int, default=None, help="the acceleration factor column index in the COLVAR file (only useful if OPESF is set)")
     parser.add_argument("--wcol", type=int, default=None, help="the cumulative work column index in the COLVAR file (e.g. metad.work); if given, produces a ln(k_obs) vs ln(W/kBT) plot")
     parser.add_argument("--stride", type=int, default=1, help="keep only every Nth row of each COLVAR (the final row is always kept). Use to thin finely-printed COLVAR files for speed. (DEFAULT: 1)")
+    parser.add_argument("--subsample-min-points", type=int, default=0, dest="subsample_min_points", help="when using --stride, reduce the stride so even the shortest trajectory keeps at least this many rows (one uniform stride is used for all trajectories). Protects short, fast-transitioning runs from being over-thinned. (DEFAULT: 0, no floor)")
     parser.add_argument("--timeunit", type=np.float64, default=1e-12, help="the conversion factor from the time unit used in PLUMED to seconds")
     parser.add_argument("--energyunit", type=np.float64, default=1, help="the conversion factor from the energy unit used in PLUMED to kJ/mol (only needed if temperature was given in Kelvin)")
     parser.add_argument("--gammamin", type=np.float64, default=0, help="the minimum value of gamma to be checked")
@@ -296,7 +297,7 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
     events = []
     acc_checked = False
     for i, colvars in enumerate(args.input):
-        data, skipped = RM.get_data(colvars, args.tcol, args.vcol, acc_col=args.acol, time_scale_factor=args.timeunit, threads=args.threads, work_col=args.wcol, stride=args.stride)
+        data, skipped = RM.get_data(colvars, args.tcol, args.vcol, acc_col=args.acol, time_scale_factor=args.timeunit, threads=args.threads, work_col=args.wcol, stride=args.stride, subsample_min_points=args.subsample_min_points)
         if skipped:
             for idx in skipped:
                 print(f"WARNING: skipping unreadable COLVAR file: {colvars[idx]}", file=sys.stderr)
