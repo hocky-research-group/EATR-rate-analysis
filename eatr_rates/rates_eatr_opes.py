@@ -135,6 +135,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--acol", type=int, default=None, help="the acceleration factor column index in the COLVAR file (only useful if OPESF is set)")
     parser.add_argument("--wcol", type=int, default=None, help="the cumulative work column index in the COLVAR file (e.g. metad.work); if given, produces a ln(k_obs) vs ln(W/kBT) plot")
     parser.add_argument("--stride", type=int, default=1, help="keep only every Nth row of each COLVAR (the final row is always kept). Use to thin finely-printed COLVAR files for speed. (DEFAULT: 1)")
+    parser.add_argument("--cdf-weights", choices=["none","binomial"], default="none", dest="cdf_weights", help="weighting for CDF least-squares fits. 'none' (default) is the historical unweighted fit; 'binomial' weights each empirical-CDF point by its sampling std sqrt(F(1-F)). Applies to the per-set observed-rate fit (--cdf) and the OPES-flooding fit (--opesf). (DEFAULT: none)")
     parser.add_argument("--subsample-min-points", type=int, default=0, dest="subsample_min_points", help="when using --stride, reduce the stride so even the shortest trajectory keeps at least this many rows (one uniform stride is used for all trajectories). Protects short, fast-transitioning runs from being over-thinned. (DEFAULT: 0, no floor)")
     parser.add_argument("--timeunit", type=np.float64, default=1e-12, help="the conversion factor from the time unit used in PLUMED to seconds")
     parser.add_argument("--energyunit", type=np.float64, default=1, help="the conversion factor from the energy unit used in PLUMED to kJ/mol (only needed if temperature was given in Kelvin)")
@@ -410,7 +411,9 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
             ecdfys_event = np.arange(1, event.sum() + 1) / len(event)
             emp_rate = event.sum() / final_times.sum()
             if args.cdf:
-                obs_rate = optimize.curve_fit(lambda t, k: 1 - np.exp(-k * t), ecdfxs_event, ecdfys_event, p0=emp_rate)[0][0]
+                obs_rate = RM._curve_fit_lenient(lambda t, k: 1 - np.exp(-k * t), ecdfxs_event, ecdfys_event, p0=emp_rate,
+                                                 bounds=(-np.inf, np.inf),
+                                                 sigma=RM.ecdf_sigma(ecdfys_event, args.cdf_weights))[0][0]
                 ks_stat, p = ks_1samp(ecdfxs_event, lambda t: 1 - np.exp(-obs_rate * t))
             else:
                 obs_rate = emp_rate
@@ -447,7 +450,7 @@ def analyze(args: argparse.Namespace) -> FloodingAnalysisResult:
                 opesf_event.extend(opesf_event_local)
 
         if args.opesf:
-            logk0_opesf = np.log(RM.iMetaD_FitCDF_times(np.array(opesf_times), event=np.array(opesf_event)))
+            logk0_opesf = np.log(RM.iMetaD_FitCDF_times(np.array(opesf_times), event=np.array(opesf_event), cdf_weights=args.cdf_weights))
 
         beta_v_datas = {barrier: beta * v_data for barrier, v_data in v_datas.items()}
         flat_bv = {b: _prepare_flat(bv, axis_first) for b, bv in beta_v_datas.items()}

@@ -216,10 +216,15 @@ Important arguments:
   Unit and temperature handling, as in `eatr-analysis`.
 - `--tcol`, `--vcol`, `--acol`
   Time, bias, and optional acceleration columns.
-- `--stride`, `--subsample-min-points`, `--cdf-weights`
-  COLVAR subsampling and CDF-fit weighting, exactly as in `eatr-analysis`. See
-  [Subsampling long COLVAR files](#subsampling-long-colvar-files) and
-  [Weighted CDF fitting](#weighted-cdf-fitting).
+- `--stride`, `--subsample-min-points`
+  COLVAR subsampling, exactly as in `eatr-analysis`. See
+  [Subsampling long COLVAR files](#subsampling-long-colvar-files).
+- `--cdf-weights`
+  Accepted, but **it does not affect the main flooding estimate**: that fits
+  `ln(k_obs)` against the exponential average across bias conditions, so no CDF
+  is fitted and results are bit-identical with and without it. It applies only
+  to the optional CDF sub-fits, i.e. the per-set observed rate under `--cdf`
+  and the OPES-flooding estimate under `--opesf`.
 - `--threads`
   Run independent set/bootstrap work in parallel.
 
@@ -392,6 +397,8 @@ Guidance:
   in the third decimal and was marginally worse on slow paces in three of the
   four sets. The option is accepted so all estimators behave consistently.
 - `KTR` accepts the option but has not been benchmarked with it.
+- For `eatr-flooding-analysis` it is a no-op unless `--cdf` or `--opesf` is
+  used, since the flooding estimate does not fit a CDF.
 
 Whenever `--stride`, `--subsample-min-points` or `--cdf-weights` are set to a
 non-default value they are recorded in the output JSON, so a result carries the
