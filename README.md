@@ -398,6 +398,26 @@ non-default value they are recorded in the output JSON, so a result carries the
 settings that produced it. Results generated with different settings are not
 directly comparable.
 
+When subsampling is active the JSON also gains a `subsampling` block recording
+what was *actually* applied, which matters because `--subsample-min-points`
+makes the stride depend on the data:
+
+```json
+"subsampling": {
+  "requested_stride": 1000,
+  "subsample_min_points": 200,
+  "effective_stride": 13,
+  "rows_per_trajectory_min": 210,
+  "rows_per_trajectory_median": 5849,
+  "rows_per_trajectory_max": 17989
+}
+```
+
+Here a requested stride of 1000 was reduced to 13 because the shortest
+trajectory in the set would otherwise have fallen below 200 rows. The same
+flags applied to a different set can therefore produce different thinning, so
+`effective_stride` is the number needed to reproduce a fit.
+
 ## Config-Driven Dataset Scripts
 
 The packaged CLI tools are best when you want to specify inputs explicitly on the command line. For repeated analysis of a filesystem dataset with fixed conventions, use the local scripts plus TOML config files.

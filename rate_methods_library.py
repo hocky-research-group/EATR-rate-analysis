@@ -168,7 +168,7 @@ def _cum_hazards_ktr(vmb_average, gamma, final_time_indices, logTrick=False):
 # [t2 V2 acc2 Vm2],
 # ...
 # ]
-def get_data(colvars, time_col, bias_col, acc_col=None, maxbias_col=None, time_scale_factor=1.0, threads=1, work_col=None, skip_errors=True, stride=1, subsample_min_points=0):  # Changed "file_format" to "colvars"
+def get_data(colvars, time_col, bias_col, acc_col=None, maxbias_col=None, time_scale_factor=1.0, threads=1, work_col=None, skip_errors=True, stride=1, subsample_min_points=0, return_info=False):  # Changed "file_format" to "colvars"
     """Load trajectory data from COLVAR files.
 
     Parameters
@@ -281,13 +281,28 @@ def get_data(colvars, time_col, bias_col, acc_col=None, maxbias_col=None, time_s
     # the subsample_min_points docstring: downstream code assumes a common time
     # step). The floor is set by the shortest trajectory so that even the
     # fastest-transitioning runs keep enough points to resolve the bias.
+    effective_stride = 1
     if stride > 1 and data:
         step = stride
         if subsample_min_points > 0:
             shortest = min(len(traj) for traj in data)
             step = min(step, max(1, shortest // subsample_min_points))
+        effective_stride = step
         if step > 1:
             data = [_subsample(traj, step) for traj in data]
+    if return_info:
+        rows = [len(traj) for traj in data]
+        info = {
+            "requested_stride": int(stride),
+            "subsample_min_points": int(subsample_min_points),
+            # With subsample_min_points the stride is data dependent, so the
+            # value actually applied is the one needed to reproduce a result.
+            "effective_stride": int(effective_stride),
+            "rows_per_trajectory_min": int(min(rows)) if rows else 0,
+            "rows_per_trajectory_median": int(np.median(rows)) if rows else 0,
+            "rows_per_trajectory_max": int(max(rows)) if rows else 0,
+        }
+        return data, skipped, info
     return data, skipped
 
 def check_acc_consistency(data, beta, rtol=2.0, n_sample=5):

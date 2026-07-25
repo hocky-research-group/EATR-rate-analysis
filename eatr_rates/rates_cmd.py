@@ -383,7 +383,12 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
         logfiles = list(args.logfiles or []) + _expand_globs(args.logfiles_glob)
     else:
         logfiles = list(args.logfiles) if args.logfiles else None
-    data, skipped = RM.get_data(input_files, args.tcol, args.vcol, acc_col=args.acol, maxbias_col=args.mcol, time_scale_factor=args.timeunit, threads=args.threads, stride=args.stride, subsample_min_points=args.subsample_min_points)
+    data, skipped, subsample_info = RM.get_data(input_files, args.tcol, args.vcol, acc_col=args.acol, maxbias_col=args.mcol, time_scale_factor=args.timeunit, threads=args.threads, stride=args.stride, subsample_min_points=args.subsample_min_points, return_info=True)
+    if args.stride != 1 or args.subsample_min_points:
+        # effective_stride can differ from the requested stride when
+        # --subsample-min-points lowers it, so record what was actually applied
+        # together with how many rows survived per trajectory.
+        run.results["subsampling"] = subsample_info
     if skipped:
         for idx in skipped:
             add_message(run, f"WARNING: skipping unreadable COLVAR file: {input_files[idx]}")
