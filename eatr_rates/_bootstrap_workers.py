@@ -31,6 +31,8 @@ class IMetaDCDFConfig:
     k_guess: float | None
     require_convergence: bool = False
     cdf_weights: str = "none"
+    cdf_qmin: float = 0.0
+    cdf_qmax: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -75,6 +77,8 @@ class EATRCDFConfig:
     bias_shift: float
     require_convergence: bool = False
     cdf_weights: str = "none"
+    cdf_qmin: float = 0.0
+    cdf_qmax: float = 1.0
 
 
 def _run_worker(task):
@@ -110,7 +114,7 @@ def _run_worker(task):
                                  bias_shift=config.bias_shift)
 
     if isinstance(config, IMetaDCDFConfig):
-        k, converged = RM.iMetaD_FitCDF(resample, config.beta, event=eve, cdf_weights=config.cdf_weights,
+        k, converged = RM.iMetaD_FitCDF(resample, config.beta, event=eve, cdf_weights=config.cdf_weights, cdf_qmin=config.cdf_qmin, cdf_qmax=config.cdf_qmax,
                                          bias_shift=config.bias_shift,
                                          k_bounds=config.k_bounds,
                                          k_guess=config.k_guess,
@@ -143,7 +147,7 @@ def _run_worker(task):
                                   bias_shift=config.bias_shift)
 
     if isinstance(config, EATRCDFConfig):
-        result, converged = RM.EATR_CDF_rate(resample, config.beta, event=eve, cdf_weights=config.cdf_weights,
+        result, converged = RM.EATR_CDF_rate(resample, config.beta, event=eve, cdf_weights=config.cdf_weights, cdf_qmin=config.cdf_qmin, cdf_qmax=config.cdf_qmax,
                                                k_bounds=config.k_bounds,
                                                gamma_bounds=config.gamma_bounds,
                                                logTrick=config.log_trick,

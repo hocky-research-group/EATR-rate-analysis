@@ -50,6 +50,30 @@ def ecdf_sigma(ecdfy, weights="none"):
     return np.sqrt(np.clip(y * (1.0 - y), 1e-3, None))
 
 
+def ecdf_quantile_mask(ecdfy, qmin=0.0, qmax=1.0):
+    """Boolean mask selecting empirical-CDF points with qmin <= F <= qmax.
+
+    Used to exclude contaminated tails from a CDF fit. Note this trims only the
+    *fit*: the excluded runs still count towards N, so the ECDF values of the
+    retained points -- and hence the observed rate and the CDF asymptote --
+    are unchanged. That is deliberate. Runs that commit in the first frame or
+    two (e.g. started in or beside the product basin because of a bad initial
+    configuration) are not usable observations of the transition time, but they
+    did happen, so removing them from N instead would distort the normalisation
+    and the observed rate.
+    """
+    y = np.asarray(ecdfy, dtype=float)
+    if qmin <= 0.0 and qmax >= 1.0:
+        return np.ones(y.shape, dtype=bool)
+    if not (0.0 <= qmin < qmax <= 1.0):
+        raise ValueError(f"require 0 <= qmin < qmax <= 1, got ({qmin}, {qmax})")
+    # Strict at the lower edge so that "cut the lowest q" drops the points whose
+    # ECDF value is <= q. With N runs the i-th point sits at i/N, so e.g.
+    # qmin=0.02 with N=50 drops exactly the single fastest run, as intended;
+    # an inclusive test would have kept it (1/50 == 0.02) and cut nothing.
+    return (y > qmin) & (y <= qmax)
+
+
 def _curve_fit_lenient(func, x, y, p0, bounds, max_nfev=None, sigma=None):
     """Like curve_fit but returns (popt, converged: bool) and never raises.
 
@@ -467,7 +491,7 @@ def iMetaD_leastsq_cost(k, t, ecdfy):
     sse = np.square(ecdfy-f).sum() # Sum of Squared Errors
     return sse
 
-def iMetaD_FitCDF(data, beta, event=None, bias_shift=0.0, k_bounds=(-np.inf,np.inf), k_guess=None, require_convergence=False, cdf_weights="none"):
+def iMetaD_FitCDF(data, beta, event=None, bias_shift=0.0, k_bounds=(-np.inf,np.inf), k_guess=None, require_convergence=False, cdf_weights="none", cdf_qmin=0.0, cdf_qmax=1.0):
     if event is None:
         event = _default_event(data) # Assume all simulations transition unless told otherwise
     times = iMetaD_rescaled_times(data, beta, bias_shift=bias_shift)
@@ -475,6 +499,8 @@ def iMetaD_FitCDF(data, beta, event=None, bias_shift=0.0, k_bounds=(-np.inf,np.i
     # Construct Empirical CDF
     ecdfx = np.sort(times[event])
     ecdfy = np.arange(1, event.sum()+1) / len(data)
+    _keep = ecdf_quantile_mask(ecdfy, cdf_qmin, cdf_qmax)
+    ecdfx, ecdfy = ecdfx[_keep], ecdfy[_keep]
 
     if k_guess is None:
         k_guess = event.sum() / np.sum(times) # Use maximum likelihood estimate as initial guess if the guess is not provided
@@ -484,13 +510,15 @@ def iMetaD_FitCDF(data, beta, event=None, bias_shift=0.0, k_bounds=(-np.inf,np.i
         raise RuntimeError("iMetaD CDF fit did not converge to tolerance")
     return popt[0], converged
 
-def iMetaD_FitCDF_times(times, event=None, k_bounds=(-np.inf,np.inf), k_guess=None, require_convergence=False, cdf_weights="none"):
+def iMetaD_FitCDF_times(times, event=None, k_bounds=(-np.inf,np.inf), k_guess=None, require_convergence=False, cdf_weights="none", cdf_qmin=0.0, cdf_qmax=1.0):
     if event is None:
         event = _default_event(times) # Assume all simulations transition unless told otherwise
 
     # Construct Empirical CDF
     ecdfx = np.sort(times[event])
     ecdfy = np.arange(1, event.sum()+1) / len(times)
+    _keep = ecdf_quantile_mask(ecdfy, cdf_qmin, cdf_qmax)
+    ecdfx, ecdfy = ecdfx[_keep], ecdfy[_keep]
 
     if k_guess is None:
         k_guess = event.sum() / np.sum(times) # Use maximum likelihood estimate as initial guess if the guess is not provided
@@ -836,7 +864,7 @@ def EATR_MLE_rate(data, beta, event=None, gamma_bounds=(0.,1.), cores=1, logTric
     return np.array([k0, gamma])
 
 # EATR Get CDF rate estimate (directly from trajectory data) (cannot precompute ln<e^γβV> because that depends on γ.)
-def EATR_CDF_rate(data, beta, event=None, k_bounds=(0.,np.inf), gamma_bounds=(0.,1.), cores=1, init_guess=[None,None], logTrick=False, reg_lambda=0.0, kIMD=1.0, do_bopt=False, bias_shift=0.0, require_convergence=False, cdf_weights="none"):
+def EATR_CDF_rate(data, beta, event=None, k_bounds=(0.,np.inf), gamma_bounds=(0.,1.), cores=1, init_guess=[None,None], logTrick=False, reg_lambda=0.0, kIMD=1.0, do_bopt=False, bias_shift=0.0, require_convergence=False, cdf_weights="none", cdf_qmin=0.0, cdf_qmax=1.0):
 
     # Get final_time_indices
     final_time_indices = np.array([int(len(traj)-1) for traj in data])
@@ -846,6 +874,10 @@ def EATR_CDF_rate(data, beta, event=None, k_bounds=(0.,np.inf), gamma_bounds=(0.
     # 2-parameter CDF fitting for gamma and k0
     ecdfx_indices = np.sort(final_time_indices[event])
     ecdfy = np.arange(1, event.sum()+1) / len(data)
+    # Optionally restrict the FIT to a quantile window (N is left unchanged).
+    _keep = ecdf_quantile_mask(ecdfy, cdf_qmin, cdf_qmax)
+    ecdfx_indices = ecdfx_indices[_keep]
+    ecdfy = ecdfy[_keep]
     
     # Precompute bias matrix once; only gamma changes between optimizer steps.
     v_data, v_mask, time_list = _build_v_data(data, bias_shift)
