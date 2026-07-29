@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import sys
@@ -18,6 +19,119 @@ def _write_colvar(path: Path, rows) -> None:
 
 
 class CliTests(unittest.TestCase):
+    @unittest.skipUnless(find_spec("numpy") and find_spec("scipy"), "numpy and scipy are required")
+    def test_rates_cli_plot_time_unit_changes_metadata_not_raw_ln_k(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            colvar1 = tmp_path / "traj1.colvar"
+            colvar2 = tmp_path / "traj2.colvar"
+            output_seconds = tmp_path / "rates_seconds.json"
+            output_microseconds = tmp_path / "rates_microseconds.json"
+            repo_root = Path(__file__).resolve().parents[1]
+
+            _write_colvar(colvar1, [(0, 0, 0.1), (1, 0, 0.15), (2, 0, 0.2), (3, 0, 0.25)])
+            _write_colvar(colvar2, [(0, 0, 0.2), (1, 0, 0.25), (2, 0, 0.3), (3, 0, 0.35)])
+
+            common_args = [
+                sys.executable,
+                "-m",
+                "eatr_rates",
+                "-i",
+                str(colvar1),
+                str(colvar2),
+                "-e",
+                "--threads",
+                "1",
+                "-q",
+            ]
+
+            result_seconds = subprocess.run(
+                [*common_args, "--plot-time-unit", "seconds", "-o", str(output_seconds)],
+                cwd=tmp_path,
+                env={**os.environ, "PYTHONPATH": str(repo_root)},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            result_microseconds = subprocess.run(
+                [*common_args, "--plot-time-unit", "microseconds", "-o", str(output_microseconds)],
+                cwd=tmp_path,
+                env={**os.environ, "PYTHONPATH": str(repo_root)},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result_seconds.returncode, 0, result_seconds.stderr)
+            self.assertEqual(result_microseconds.returncode, 0, result_microseconds.stderr)
+
+            payload_seconds = json.loads(output_seconds.read_text(encoding="utf-8"))
+            payload_microseconds = json.loads(output_microseconds.read_text(encoding="utf-8"))
+
+            self.assertEqual(payload_seconds["plot_time_unit"], "seconds")
+            self.assertEqual(payload_microseconds["plot_time_unit"], "microseconds")
+            self.assertEqual(payload_seconds["EATR MLE ln k"], payload_microseconds["EATR MLE ln k"])
+            self.assertEqual(payload_seconds["EATR MLE gamma"], payload_microseconds["EATR MLE gamma"])
+            self.assertEqual(payload_seconds["ln(k_obs)"], payload_microseconds["ln(k_obs)"])
+
+    @unittest.skipUnless(find_spec("numpy") and find_spec("scipy"), "numpy and scipy are required")
+    def test_rates_cli_bootstrap_threads_writes_ci_output(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            colvar1 = tmp_path / "traj1.colvar"
+            colvar2 = tmp_path / "traj2.colvar"
+            colvar3 = tmp_path / "traj3.colvar"
+            output = tmp_path / "rates_bootstrap.json"
+            repo_root = Path(__file__).resolve().parents[1]
+
+            _write_colvar(colvar1, [(0, 0, 0.1), (1, 0, 0.15), (2, 0, 0.2), (3, 0, 0.25)])
+            _write_colvar(colvar2, [(0, 0, 0.2), (1, 0, 0.25), (2, 0, 0.3), (3, 0, 0.35)])
+            _write_colvar(colvar3, [(0, 0, 0.3), (1, 0, 0.35), (2, 0, 0.4), (3, 0, 0.45)])
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "eatr_rates",
+                    "-i",
+                    str(colvar1),
+                    str(colvar2),
+                    str(colvar3),
+                    "-e",
+                    "-b",
+                    "--numboots",
+                    "6",
+                    "--threads",
+                    "2",
+                    "--plot-time-unit",
+                    "microseconds",
+                    "-q",
+                    "-o",
+                    str(output),
+                ],
+                cwd=tmp_path,
+                env={**os.environ, "PYTHONPATH": str(repo_root)},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertIn("EATR MLE ln k", payload)
+            self.assertIn("EATR MLE gamma", payload)
+            self.assertIn("EATR MLE ln k CI", payload)
+            self.assertIn("EATR MLE gamma CI", payload)
+            self.assertIn("ln(k_obs)", payload)
+            self.assertIn("ln(k_obs) avg", payload)
+            self.assertIn("ln(k_obs) std", payload)
+            self.assertEqual(payload["plot_time_unit"], "microseconds")
+            self.assertEqual(payload["numboots"], 6)
+            self.assertIn("EATR MLE CDF plot", payload)
+            self.assertTrue({"ecdf", "fit", "time", "n_total", "ln_k"}.issubset(set(payload["EATR MLE CDF plot"])))
+            self.assertEqual(len(payload["EATR MLE CDF plot"]["time"]), len(payload["EATR MLE CDF plot"]["ecdf"]))
+            self.assertEqual(len(payload["EATR MLE CDF plot"]["time"]), len(payload["EATR MLE CDF plot"]["fit"]))
+
     @unittest.skipUnless(find_spec("numpy") and find_spec("scipy"), "numpy and scipy are required")
     def test_rates_cli_writes_json_output(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -52,8 +166,50 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stderr)
             payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertAlmostEqual(payload["ln(k_obs)"], math.log(1.0 / (2.0e-12)))
             self.assertIn("iMetaD MLE ln k", payload)
             self.assertIn("iMetaD MLE KS stat", payload)
+
+    @unittest.skipUnless(find_spec("numpy") and find_spec("scipy"), "numpy and scipy are required")
+    def test_rates_cli_imetad_cdf_writes_plot_payload(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            colvar1 = tmp_path / "traj1.colvar"
+            colvar2 = tmp_path / "traj2.colvar"
+            output = tmp_path / "imetad_cdf.json"
+            repo_root = Path(__file__).resolve().parents[1]
+
+            _write_colvar(colvar1, [(0, 0, 0.1), (1, 0, 0.15), (2, 0, 0.2), (3, 0, 0.25)])
+            _write_colvar(colvar2, [(0, 0, 0.2), (1, 0, 0.25), (2, 0, 0.3), (3, 0, 0.35)])
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "eatr_rates",
+                    "-i",
+                    str(colvar1),
+                    str(colvar2),
+                    "-M",
+                    "--threads",
+                    "1",
+                    "-q",
+                    "-o",
+                    str(output),
+                ],
+                cwd=tmp_path,
+                env={**os.environ, "PYTHONPATH": str(repo_root)},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertIn("iMetaD CDF plot", payload)
+            self.assertTrue({"ecdf", "fit", "time", "n_total", "ln_k"}.issubset(set(payload["iMetaD CDF plot"])))
+            self.assertEqual(len(payload["iMetaD CDF plot"]["time"]), len(payload["iMetaD CDF plot"]["ecdf"]))
+            self.assertEqual(len(payload["iMetaD CDF plot"]["time"]), len(payload["iMetaD CDF plot"]["fit"]))
 
     @unittest.skipUnless(find_spec("numpy") and find_spec("scipy"), "numpy and scipy are required")
     def test_check_order_cli_writes_pairs(self):
@@ -88,6 +244,92 @@ class CliTests(unittest.TestCase):
                 output.read_text(encoding="utf-8").splitlines(),
                 ["a.colvar | a.log", "b.colvar | b.log"],
             )
+
+    @unittest.skipUnless(find_spec("numpy") and find_spec("scipy"), "numpy and scipy are required")
+    def test_flooding_cli_bootstrap_threads_writes_uncertainty_output(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            repo_root = Path(__file__).resolve().parents[1]
+            output = tmp_path / "flooding_bootstrap.json"
+
+            set1_traj1 = tmp_path / "set1_traj1.colvar"
+            set1_traj2 = tmp_path / "set1_traj2.colvar"
+            set1_traj3 = tmp_path / "set1_traj3.colvar"
+            set2_traj1 = tmp_path / "set2_traj1.colvar"
+            set2_traj2 = tmp_path / "set2_traj2.colvar"
+            set2_traj3 = tmp_path / "set2_traj3.colvar"
+            _write_colvar(set1_traj1, [(0, 0, 0.1), (1, 0, 0.2), (2, 0, 0.3), (3, 0, 0.4)])
+            _write_colvar(set1_traj2, [(0, 0, 0.12), (1, 0, 0.22), (2, 0, 0.32), (3, 0, 0.42)])
+            _write_colvar(set1_traj3, [(0, 0, 0.14), (1, 0, 0.24), (2, 0, 0.34), (3, 0, 0.44)])
+            _write_colvar(set2_traj1, [(0, 0, 0.4), (1, 0, 0.5), (2, 0, 0.6), (3, 0, 0.7)])
+            _write_colvar(set2_traj2, [(0, 0, 0.42), (1, 0, 0.52), (2, 0, 0.62), (3, 0, 0.72)])
+            _write_colvar(set2_traj3, [(0, 0, 0.44), (1, 0, 0.54), (2, 0, 0.64), (3, 0, 0.74)])
+
+            log_paths = []
+            for index in range(6):
+                log_path = tmp_path / f"log{index}.log"
+                log_path.write_text("#! SET COMMIT(T)ED TO BASIN 1\n", encoding="utf-8")
+                log_paths.append(log_path)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "eatr_rates.rates_eatr_opes",
+                    "-i",
+                    str(set1_traj1),
+                    str(set1_traj2),
+                    str(set1_traj3),
+                    "--barrier",
+                    "1",
+                    "-i",
+                    str(set2_traj1),
+                    str(set2_traj2),
+                    str(set2_traj3),
+                    "--barrier",
+                    "2",
+                    "--logfiles",
+                    str(log_paths[0]),
+                    str(log_paths[1]),
+                    str(log_paths[2]),
+                    "--logfiles",
+                    str(log_paths[3]),
+                    str(log_paths[4]),
+                    str(log_paths[5]),
+                    "--beta",
+                    "1.0",
+                    "--tcol",
+                    "0",
+                    "--vcol",
+                    "2",
+                    "--bootstrap",
+                    "--numboots",
+                    "6",
+                    "--threads",
+                    "2",
+                    "--plot-time-unit",
+                    "hours",
+                    "-q",
+                    "-o",
+                    str(output),
+                ],
+                cwd=tmp_path,
+                env={**os.environ, "PYTHONPATH": str(repo_root)},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["plot_time_unit"], "hours")
+            self.assertIn("bootstrap_logk0_std", payload)
+            self.assertIn("bootstrap_gamma_std", payload)
+            self.assertEqual(len(payload["bootstrap_iterations"]), 6)
+            self.assertEqual(payload["numboots"], 6)
+            self.assertTrue((tmp_path / "flooding_bootstrap_observed_rate.pdf").exists())
+            self.assertTrue((tmp_path / "flooding_bootstrap_ln_kobs_vs_acceleration.pdf").exists())
+            self.assertTrue((tmp_path / "flooding_bootstrap_diagnostics.pdf").exists())
 
     @unittest.skipUnless(find_spec("numpy") and find_spec("scipy"), "numpy and scipy are required")
     def test_flooding_cli_writes_json_and_plots(self):
@@ -138,6 +380,8 @@ class CliTests(unittest.TestCase):
                     "0",
                     "--vcol",
                     "2",
+                    "--plot-time-unit",
+                    "microseconds",
                     "-q",
                     "-o",
                     str(output),
@@ -155,28 +399,32 @@ class CliTests(unittest.TestCase):
             self.assertIn("logk0", payload)
             self.assertEqual(len(payload["set_reports"]), 2)
             self.assertIn("flooding_diagnostics", payload)
-            self.assertTrue((tmp_path / "flooding_observed_rate.png").exists())
-            self.assertTrue((tmp_path / "flooding_ln_kobs_vs_acceleration.png").exists())
-            self.assertTrue((tmp_path / "flooding_diagnostics.png").exists())
+            self.assertTrue((tmp_path / "flooding_observed_rate.pdf").exists())
+            self.assertTrue((tmp_path / "flooding_ln_kobs_vs_acceleration.pdf").exists())
+            self.assertTrue((tmp_path / "flooding_diagnostics.pdf").exists())
 
     @unittest.skipUnless(find_spec("numpy") and find_spec("scipy"), "numpy and scipy are required")
-    def test_plot_results_cli_writes_regular_series_figure(self):
+    def test_plot_results_cli_writes_regular_series_and_cdf_figures(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             repo_root = Path(__file__).resolve().parents[1]
-            input1 = tmp_path / "a.json"
-            input2 = tmp_path / "b.json"
-            output = tmp_path / "regular.png"
+            input1 = tmp_path / "pace_1ps.json"
+            input2 = tmp_path / "pace_10ps.json"
+            output = tmp_path / "regular.pdf"
+            cdf_output = tmp_path / "regular_cdf.pdf"
 
             input1.write_text(
                 json.dumps(
                     {
-                        "EATR MLE ln k": 1.0,
-                        "EATR MLE gamma": 0.2,
-                        "EATR MLE ln k std": 0.1,
-                        "EATR MLE gamma std": 0.02,
-                        "EATR CDF ln k": 1.1,
-                        "EATR CDF gamma": 0.25,
+                        "EATR CDF ln k": 1.0,
+                        "EATR CDF gamma": 0.2,
+                        "EATR CDF ln k std": 0.1,
+                        "EATR CDF gamma std": 0.02,
+                        "EATR CDF plot": {
+                            "time": [1.0, 2.0, 3.0],
+                            "ecdf": [0.5, 0.75, 1.0],
+                            "fit": [0.4, 0.7, 0.95],
+                        },
                     }
                 ),
                 encoding="utf-8",
@@ -184,12 +432,15 @@ class CliTests(unittest.TestCase):
             input2.write_text(
                 json.dumps(
                     {
-                        "EATR MLE ln k": 2.0,
-                        "EATR MLE gamma": 0.4,
-                        "EATR MLE ln k std": 0.2,
-                        "EATR MLE gamma std": 0.03,
-                        "EATR CDF ln k": 2.1,
-                        "EATR CDF gamma": 0.45,
+                        "EATR CDF ln k": 2.0,
+                        "EATR CDF gamma": 0.4,
+                        "EATR CDF ln k std": 0.2,
+                        "EATR CDF gamma std": 0.03,
+                        "EATR CDF plot": {
+                            "time": [1.5, 2.5, 3.5],
+                            "ecdf": [0.4, 0.7, 1.0],
+                            "fit": [0.35, 0.68, 0.98],
+                        },
                     }
                 ),
                 encoding="utf-8",
@@ -204,14 +455,13 @@ class CliTests(unittest.TestCase):
                     "-i",
                     str(input1),
                     str(input2),
-                    "--xvalues",
-                    "1",
-                    "10",
                     "--labels",
-                    "a",
-                    "b",
+                    "pace 1 ps",
+                    "pace 10 ps",
                     "--method",
-                    "eatr-comparison",
+                    "eatr-cdf",
+                    "--time-unit",
+                    "microseconds",
                     "-o",
                     str(output),
                 ],
@@ -224,3 +474,4 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(output.exists())
+            self.assertTrue(cdf_output.exists())

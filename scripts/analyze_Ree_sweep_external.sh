@@ -3,51 +3,48 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_BIN="${ROOT_DIR}/.venv/bin"
-PYTHON_BIN="${VENV_BIN}/python"
-OUT_DIR="${ROOT_DIR}/example-data/test_results_cli"
+OUT_DIR="${ROOT_DIR}/example-data/test_results_cli_fullReesweep"
 THREADS="${EATR_THREADS:-4}"
-NUMBOOTS="${EATR_NUMBOOTS:-50}"
-PLOT_TIME_UNIT="${EATR_PLOT_TIME_UNIT:-microseconds}"
+NUMBOOTS="${EATR_NUMBOOTS:-20}"
 MPL_CACHE_DIR="${ROOT_DIR}/.matplotlib-cache"
 XDG_CACHE_DIR="${ROOT_DIR}/.cache"
+DATA_DIR=/Volumes/WDGMH21/tmp-data-analyze-8June2026/imetad_eatr_analysis/prod_imetad_withwork/biasRee/
 
 mkdir -p "${MPL_CACHE_DIR}" "${XDG_CACHE_DIR}"
 export MPLCONFIGDIR="${MPL_CACHE_DIR}"
 export XDG_CACHE_HOME="${XDG_CACHE_DIR}"
 
-if [[ ! -x "${PYTHON_BIN}" ]]; then
-  echo "Expected Python interpreter under ${PYTHON_BIN}. Create the project .venv first." >&2
-  exit 1
-fi
-
-set -x
-
 mkdir -p "${OUT_DIR}/wt_regular"
 
-PACE_STEPS=(1e2 1e3 1e4 2e4 5e4 1e5 5e5 1e6)
-PACE_PS=(1 10 100 200 500 1000 5000 10000)
+height=0.1
+bf=5
+
+PACE_STEPS=(1000 5000 10000 30000 50000 100000)
+PACE_PS=(10 50 100 300 500 1000)
 
 for idx in "${!PACE_STEPS[@]}"; do
   pace_step="${PACE_STEPS[$idx]}"
   pace_ps="${PACE_PS[$idx]}"
-  pace_dir="${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_wt/eruns_pace${pace_step}"
-  "${PYTHON_BIN}" -m eatr_rates \
-    -i "${pace_dir}"/run_*/metad.colvar \
-    --logfiles "${pace_dir}"/run_*/p.log \
+  pace_dir="${DATA_DIR}/bf${bf}/height${height}/pace$pace"
+  outdir=${OUT_DIR}/bf${bf}/height${height}
+  mkdir -p $outdir
+  "${VENV_BIN}/eatr-analysis" \
+    -i "${pace_dir}"/s*/*.colvar.dat \
+    --logfiles "${pace_dir}"/s*/*.plumed.log \
     --temp 312 \
     --timeunit 1e-12 \
-    --plot-time-unit "${PLOT_TIME_UNIT}" \
     --tcol 0 \
     --vcol 2 \
     --acol 4 \
-    -eEmM \
-    --bootstrap --numboots "${NUMBOOTS}" \
+    -e \
     --threads "${THREADS}" \
     -q \
-    -o "${OUT_DIR}/wt_regular/pace_${pace_ps}ps.json"
+    -o "$outdir/pace_${pace_ps}ps.json"
 done
 
-"${PYTHON_BIN}" -m eatr_rates.plot_results regular-series \
+exit
+
+"${VENV_BIN}/eatr-analysis-plot" regular-series \
   -i \
   "${OUT_DIR}/wt_regular/pace_1ps.json" \
   "${OUT_DIR}/wt_regular/pace_10ps.json" \
@@ -62,11 +59,9 @@ done
   --xlabel "MetaD hill deposition pace (ps)" \
   --method eatr-cdf imetad-cdf \
   --truerate 0.35967608559103206 \
-  --time-unit "${PLOT_TIME_UNIT}" \
   -o "${OUT_DIR}/wt_regular_series.pdf"
 
-
-"${PYTHON_BIN}" -m eatr_rates.rates_eatr_opes \
+"${VENV_BIN}/eatr-flooding-analysis" \
   -i "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_opes/eruns_barr5"/run_*/opes_short.colvar --barrier 5 \
   -i "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_opes/eruns_barr7"/run_*/opes_short.colvar --barrier 7 \
   -i "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_opes/eruns_barr9"/run_*/opes_short.colvar --barrier 9 \
@@ -79,31 +74,23 @@ done
   --logfiles "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_opes/eruns_barr13"/run_*/p.log \
   --temp 312 \
   --timeunit 1e-12 \
-  --plot-time-unit "${PLOT_TIME_UNIT}" \
   --tcol 0 \
   --vcol 4 \
   --bootstrap --numboots "${NUMBOOTS}" \
   --threads "${THREADS}" \
-  --condition-label "OPES barrier" \
-  --condition-unit "kJ mol^-1" \
-  --title-prefix "OPES flooding CLI" \
-  --plot-prefix "${OUT_DIR}/opes_cli" \
   --truerate 0.35967608559103206 \
   -q \
   -o "${OUT_DIR}/opes_flooding.json"
 
-# Alternatively, generate plots separately from an existing JSON (e.g. to
-# change labels or time units without rerunning the analysis):
-# "${PYTHON_BIN}" -m eatr_rates.plot_results flooding \
-#   -i "${OUT_DIR}/opes_flooding.json" \
-#   --condition-label "OPES barrier" \
-#   --condition-unit "kJ mol^-1" \
-#   --title-prefix "OPES flooding CLI" \
-#   --time-unit "${PLOT_TIME_UNIT}" \
-#   --truerate 0.35967608559103206 \
-#   -o "${OUT_DIR}/opes_cli"
+"${VENV_BIN}/eatr-analysis-plot" flooding \
+  -i "${OUT_DIR}/opes_flooding.json" \
+  --condition-label "OPES barrier" \
+  --condition-unit "kJ mol^-1" \
+  --title-prefix "OPES flooding CLI" \
+  --truerate 0.35967608559103206 \
+  -o "${OUT_DIR}/opes_cli"
 
-"${PYTHON_BIN}" -m eatr_rates.rates_eatr_opes \
+"${VENV_BIN}/eatr-flooding-analysis" \
   -i "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_wt/eruns_pace1e2"/run_*/metad.colvar --barrier 1 \
   -i "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_wt/eruns_pace1e3"/run_*/metad.colvar --barrier 10 \
   -i "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_wt/eruns_pace1e4"/run_*/metad.colvar --barrier 100 \
@@ -122,27 +109,20 @@ done
   --logfiles "${ROOT_DIR}/example-data/Ree_Data/E_end_end_distance_wt/eruns_pace1e6"/run_*/p.log \
   --temp 312 \
   --timeunit 1e-12 \
-  --plot-time-unit "${PLOT_TIME_UNIT}" \
   --tcol 0 \
   --vcol 2 \
   --acol 4 \
   --nooffset \
   --bootstrap --numboots "${NUMBOOTS}" \
   --threads "${THREADS}" \
-  --condition-label "MetaD pace" \
-  --condition-unit "ps" \
-  --title-prefix "WT flooding CLI" \
-  --plot-prefix "${OUT_DIR}/wt_cli" \
   --truerate 0.35967608559103206 \
   -q \
   -o "${OUT_DIR}/wt_flooding.json"
 
-# Alternatively, generate plots separately from an existing JSON:
-# "${PYTHON_BIN}" -m eatr_rates.plot_results flooding \
-#   -i "${OUT_DIR}/wt_flooding.json" \
-#   --condition-label "MetaD pace" \
-#   --condition-unit "ps" \
-#   --title-prefix "WT flooding CLI" \
-#   --time-unit "${PLOT_TIME_UNIT}" \
-#   --truerate 0.35967608559103206 \
-#   -o "${OUT_DIR}/wt_cli"
+"${VENV_BIN}/eatr-analysis-plot" flooding \
+  -i "${OUT_DIR}/wt_flooding.json" \
+  --condition-label "MetaD pace" \
+  --condition-unit "ps" \
+  --title-prefix "WT flooding CLI" \
+  --truerate 0.35967608559103206 \
+  -o "${OUT_DIR}/wt_cli"
