@@ -40,9 +40,10 @@ This repository includes several related estimators:
 
 The relevant papers included in [papers](papers) are:
 
-- [52_2024_Mazzaferro_EATR_JCTC.pdf](papers/52_2024_Mazzaferro_EATR_JCTC.pdf)
+- [52_2024_Mazzaferro_EATR_JCTC.pdf](papers/52_2024_Mazzaferro_EATR_JCTC.pdf) ([DOI: 10.1021/acs.jctc.4c00425](https://doi.org/10.1021/acs.jctc.4c00425))
 - [52_2024_Mazzaferro_EATR_JCTC_SI.pdf](papers/52_2024_Mazzaferro_EATR_JCTC_SI.pdf)
-- [eatr-flooding-plusSI-arxiv.pdf](papers/eatr-flooding-plusSI-arxiv.pdf)
+- [Mazzaferro-EATRflooding-JCTC_2026.pdf](papers/Mazzaferro-EATRflooding-JCTC_2026.pdf) ([DOI: 10.1021/acs.jctc.6c00883](https://doi.org/10.1021/acs.jctc.6c00883))
+- [Mazzaferro-EATRflooding-JCTC_2026-SI.pdf](papers/Mazzaferro-EATRflooding-JCTC_2026-SI.pdf)
 
 Practical guidance:
 
