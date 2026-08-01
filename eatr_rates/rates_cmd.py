@@ -95,6 +95,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cdf-qmin", type=float, default=0.0, dest="cdf_qmin", help="exclude empirical-CDF points below this quantile from CDF fits. Use to ignore anomalously fast runs (e.g. trajectories that commit in the first frame because of a bad starting structure). The runs still count towards N, so the observed rate and CDF asymptote are unchanged. (DEFAULT: 0.0)")
     parser.add_argument("--cdf-qmax", type=float, default=1.0, dest="cdf_qmax", help="exclude empirical-CDF points above this quantile from CDF fits. Keep at 1.0 unless the long-time tail is known to be contaminated: it carries the censoring information. (DEFAULT: 1.0)")
     parser.add_argument("--subsample-min-points", type=int, default=0, dest="subsample_min_points", help="when using --stride, reduce the stride so even the shortest trajectory keeps at least this many rows (one uniform stride is used for all trajectories). Protects short, fast-transitioning runs from being over-thinned. (DEFAULT: 0, no floor)")
+    parser.add_argument("--subsample-runs", type=str, default=None, dest="subsample_runs", help="ALSO fit using only this many of the input trajectories, e.g. '20' or a comma-separated sweep '10,20,30'. The full-set fit is still reported at the top level; subset fits go in the 'subsample' block. Use to measure how much the answer depends on how many runs you did. (DEFAULT: None)")
+    parser.add_argument("--subsample-reps", type=int, default=1, dest="subsample_reps", help="number of independent random subsets to draw at each --subsample-runs size. The SPREAD across these is the honest uncertainty at that size. (DEFAULT: 1)")
+    parser.add_argument("--subsample-bootstrap", action="store_true", dest="subsample_bootstrap", help="also bootstrap inside each subset. Off by default: with several replicates the spread ACROSS subsets already measures the uncertainty, and nesting the bootstrap multiplies the cost by --numboots. (DEFAULT: off)")
+    parser.add_argument("--subsample-replace", action="store_true", dest="subsample_replace", help="draw subsets WITH replacement. Off by default; with-replacement resampling at full size is what --bootstrap already does, and conflating the two is rarely what you want. (DEFAULT: off, i.e. without replacement)")
     parser.add_argument(
         "--timeunit",
         type=np.float64,
@@ -181,6 +185,12 @@ def parse_beta(args: argparse.Namespace) -> float:
 def validate_args(args: argparse.Namespace) -> None:
     if not (args.imetadmle or args.imetadcdf or args.ktrmle or args.ktrcdf or args.eatrmle or args.eatrcdf):
         raise SystemExit("Specify at least one rate method to perform from -m -M -k -K -e -E (M=iMetaD, K=KTR, E=EATR; lowercase is MLE and uppercase is CDF).")
+    if getattr(args, "subsample_runs", None):
+        for size in parse_subsample_sizes(args.subsample_runs):
+            if size < 2:
+                raise SystemExit(f"--subsample-runs must be at least 2, got {size}.")
+        if args.subsample_reps < 1:
+            raise SystemExit("--subsample-reps must be at least 1.")
 
 
 def json_ready(value: object) -> object:
@@ -337,6 +347,50 @@ def build_exp_cdf_plot_payload(times, event, log_k: float):
         "n_events": int(event.sum()),
         "ln_k": float(log_k),
     }
+
+
+def parse_subsample_sizes(spec: str | None) -> list[int]:
+    """Parse "10,20,30" (or "20") into [10, 20, 30]."""
+    if not spec:
+        return []
+    sizes = []
+    for token in str(spec).split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            sizes.append(int(token))
+        except ValueError:
+            raise SystemExit(f"--subsample-runs expects integers, got {token!r}.")
+    return sizes
+
+
+def summarise_subsamples(records: list[dict]) -> dict:
+    """mean/std across replicates, per subset size, for every numeric scalar recorded.
+
+    The std across independent subsets is the quantity of interest: it says how much the
+    answer depends on WHICH runs you happened to do. It is NOT the bootstrap CI, and for
+    subsets drawn from a common parent it is a LOWER bound, because the subsets overlap
+    (e.g. 30 drawn from 40 share 75% of their trajectories). `parent_n` is recorded so a
+    finite-population correction can be applied downstream.
+    """
+    summary: dict[str, dict] = {}
+    by_size: dict[int, list[dict]] = {}
+    for rec in records:
+        by_size.setdefault(rec["n"], []).append(rec)
+    for size, recs in sorted(by_size.items()):
+        entry: dict[str, object] = {"n_fits": len(recs)}
+        keys = {k for r in recs for k, v in r.items()
+                if isinstance(v, (int, float)) and not isinstance(v, bool) and k not in ("n", "rep")}
+        for key in sorted(keys):
+            vals = [float(r[key]) for r in recs if isinstance(r.get(key), (int, float))
+                    and not isinstance(r.get(key), bool)]
+            if not vals:
+                continue
+            entry[f"{key} mean"] = float(np.mean(vals))
+            entry[f"{key} std"] = float(np.std(vals, ddof=1)) if len(vals) > 1 else None
+        summary[str(size)] = entry
+    return summary
 
 
 def _run_estimators(
@@ -739,6 +793,68 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
         use_threaded_bootstrap=use_threaded_bootstrap,
         bootstrap_ci=bootstrap_ci,
     )
+
+    sizes = parse_subsample_sizes(getattr(args, "subsample_runs", None))
+    if sizes:
+        parent_n = len(data)
+        too_big = [n for n in sizes if n > parent_n and not args.subsample_replace]
+        if too_big:
+            # Fail loudly: silently shrinking the request would quietly answer a
+            # different question than the one that was asked.
+            raise SystemExit(
+                f"--subsample-runs {','.join(str(n) for n in too_big)} exceeds the "
+                f"{parent_n} trajectories available (use --subsample-replace to draw "
+                f"with replacement)."
+            )
+        rng = np.random.default_rng(args.seed)
+        # Bootstrapping inside every subset multiplies cost by --numboots for information
+        # the across-replicate spread already carries, so it is opt-in.
+        sub_args = argparse.Namespace(**{**vars(args), "bootstrap": args.subsample_bootstrap})
+        sub_boot = args.subsample_bootstrap and args.threads > 1
+        records = []
+        for size in sizes:
+            # A subset that is the whole parent is deterministic, so extra replicates
+            # would be identical fits.
+            reps = 1 if (size >= parent_n and not args.subsample_replace) else args.subsample_reps
+            for rep in range(1, reps + 1):
+                idx = rng.choice(parent_n, size=size, replace=args.subsample_replace)
+                sub_data = [data[i] for i in idx]
+                sub_event = np.asarray(event)[idx]
+                # data and event MUST stay index-aligned; a mismatch here would produce a
+                # wrong number rather than an error.
+                if len(sub_data) != len(sub_event):
+                    raise SystemExit("internal error: subsample data/event length mismatch")
+                sub_run = AnalysisResult(beta=beta, data=[], event=np.array([]))
+                _run_estimators(
+                    sub_run,
+                    sub_data,
+                    sub_event,
+                    sub_args,
+                    beta=beta,
+                    seed=seed,
+                    k_bounds=k_bounds,
+                    gamma_bounds=gamma_bounds,
+                    init_guess=init_guess,
+                    use_scipy_bootstrap=False,
+                    use_threaded_bootstrap=sub_boot,
+                    bootstrap_ci=sub_boot,
+                )
+                rec: dict[str, object] = {"n": int(size), "rep": rep,
+                                          "indices": [int(i) for i in idx]}
+                for key, value in sub_run.results.items():
+                    # keep the scalars; the big per-fit CDF payloads are not useful here
+                    if isinstance(value, (int, float, bool, str)) or value is None:
+                        rec[key] = value
+                records.append(rec)
+        run.results["subsample"] = {
+            "parent_n": parent_n,
+            "sizes": sizes,
+            "reps": args.subsample_reps,
+            "replace": bool(args.subsample_replace),
+            "bootstrap_per_subset": bool(args.subsample_bootstrap),
+            "results": records,
+            "summary": summarise_subsamples(records),
+        }
 
     return run
 

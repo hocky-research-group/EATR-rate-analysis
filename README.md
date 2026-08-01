@@ -367,6 +367,53 @@ early-transitioning run forces finer resolution (and more compute) for all of
 them. That is the safe behaviour: early transitions are exactly what the
 short-time part of the CDF depends on.
 
+## Subsampling trajectories — how many runs do you need?
+
+The section above thins rows *within* each trajectory. `--subsample-runs` is a
+different question: it refits using only some of the **trajectories**, so you can
+see how much the answer depends on how many runs you did.
+
+```bash
+eatr-analysis -g 'run_*/metad.colvar' --logfiles-glob 'run_*/p.log' \
+  --temp 312 --subsample-runs 10,20,30 --subsample-reps 8 --seed 42 -E
+```
+
+The full-set fit is still reported at the top level exactly as before; subset fits
+are added in a `subsample` block:
+
+```json
+"subsample": {
+  "parent_n": 40, "sizes": [10,20,30], "reps": 8, "replace": false,
+  "results": [ {"n":10, "rep":1, "indices":[...], "EATR CDF gamma":0.87, ...}, ... ],
+  "summary": { "10": {"n_fits":8, "EATR CDF gamma mean":0.864, "EATR CDF gamma std":0.102}, ... }
+}
+```
+
+**Read the `std`, not the `mean`.** The spread across independent subsets is what
+tells you how much your answer depends on which runs you happened to do. The mean
+generally drifts as you shrink the subsets — γ in particular is biased *high* at
+small N — so a change in the mean is not evidence about the coordinate.
+
+Three things worth knowing:
+
+* **The bootstrap is off inside each subset by default.** With several replicates
+  the spread across them already measures the uncertainty, and nesting the
+  bootstrap multiplies the cost by `--numboots`. Turn it on with
+  `--subsample-bootstrap` if you want per-subset CIs too.
+* **Draws are without replacement**, because drawing *with* replacement at full
+  size is what `--bootstrap` already does. `--subsample-replace` switches it.
+* **Subsets from one parent overlap** — 30 drawn from 40 share 75% of their
+  trajectories — so the reported `std` is a *lower bound* on true sampling
+  variability. `parent_n` and the per-fit `indices` are recorded so a
+  finite-population correction can be applied afterwards.
+
+Requesting more trajectories than you have is an error rather than a silent
+truncation, and a size equal to the parent collapses to one replicate (drawing
+all of them without replacement is deterministic).
+
+The COLVARs are parsed once and reused for every subset, so a sweep costs far
+less than the equivalent number of separate `eatr-analysis` invocations.
+
 ## Weighted CDF fitting
 
 The CDF estimators fit the model to an empirical CDF by least squares. By
