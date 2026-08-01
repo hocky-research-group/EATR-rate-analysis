@@ -339,69 +339,30 @@ def build_exp_cdf_plot_payload(times, event, log_k: float):
     }
 
 
-def analyze(args: argparse.Namespace) -> AnalysisResult:
-    # --threads controls the ProcessPoolExecutor worker count for bootstrap.
-    use_threaded_bootstrap = args.bootstrap and args.threads > 1
-    use_scipy_bootstrap = args.bootstrap and boots_avail and not args.std and not use_threaded_bootstrap
-    bootstrap_ci = use_scipy_bootstrap or use_threaded_bootstrap
+def _run_estimators(
+    run: AnalysisResult,
+    data: list,
+    event: np.ndarray,
+    args: argparse.Namespace,
+    *,
+    beta,
+    seed,
+    k_bounds,
+    gamma_bounds,
+    init_guess,
+    use_scipy_bootstrap: bool,
+    use_threaded_bootstrap: bool,
+    bootstrap_ci: bool,
+) -> AnalysisResult:
+    """Run every requested estimator on (data, event), writing into run.results.
 
-    beta = parse_beta(args)
-    validate_args(args)
-    plot_time_unit, _, _ = resolve_time_unit(args.plot_time_unit)
-    run = AnalysisResult(beta=beta, data=[], event=np.array([]))
-    run.results["plot_time_unit"] = plot_time_unit
-    # Record the subsampling/fitting options so a JSON is self-describing:
-    # results produced with different settings are not directly comparable.
-    if args.stride != 1:
-        run.results["stride"] = args.stride
-    if args.subsample_min_points:
-        run.results["subsample_min_points"] = args.subsample_min_points
-    if args.cdf_weights != "none":
-        run.results["cdf_weights"] = args.cdf_weights
-    if args.cdf_qmin > 0.0 or args.cdf_qmax < 1.0:
-        run.results["cdf_quantile_range"] = [args.cdf_qmin, args.cdf_qmax]
+    Split out of analyze() so the same estimator stack can be applied both to the full
+    dataset and to subsamples of it (--subsample-runs) without re-reading the COLVARs,
+    which is by far the expensive part of a fit.
 
-    gamma_bounds = (args.gammamin, args.gammamax)
-    k_bounds = (np.exp(args.lnkmin), np.exp(args.lnkmax))
-    init_guess = args.initguess if args.initguess[0] is None else (np.exp(args.initguess[0]), args.initguess[1])
-
-    if args.bayesopt and bopt_avail:
-        add_message(run, "Bayesian Optimization module activated.")
-    elif args.bayesopt:
-        add_message(run, "The Bayesian Optimization module was not able to be loaded. Defaulting to local optimizers.")
-    if args.beta is not None or args.kt is not None:
-        report_beta(run)
-    else:
-        report_beta_from_temp(run, args.energyunit)
-    report_bootstrap_mode(run, args.bootstrap, bootstrap_ci, use_threaded_bootstrap)
-
-    if args.barrier > 0 and (args.ktrmle or args.ktrcdf or args.eatrmle or args.eatrcdf):
-        add_message(run, "WARNING: Running KTR and/or EATR on OPES simulations using this analysis script is not expected to work properly! You should instead use the EATR-OPES method (not published yet).")
-
-    seed = args.seed
-    random.seed(seed)
-    seed = seed if seed is None else seed + 1
-
-    input_files = list(args.input or []) + (_expand_globs(args.input_glob) if args.input_glob else [])
-    if args.logfiles_glob:
-        logfiles = list(args.logfiles or []) + _expand_globs(args.logfiles_glob)
-    else:
-        logfiles = list(args.logfiles) if args.logfiles else None
-    data, skipped, subsample_info = RM.get_data(input_files, args.tcol, args.vcol, acc_col=args.acol, maxbias_col=args.mcol, time_scale_factor=args.timeunit, threads=args.threads, stride=args.stride, subsample_min_points=args.subsample_min_points, return_info=True)
-    if args.stride != 1 or args.subsample_min_points:
-        # effective_stride can differ from the requested stride when
-        # --subsample-min-points lowers it, so record what was actually applied
-        # together with how many rows survived per trajectory.
-        run.results["subsampling"] = subsample_info
-    if skipped:
-        for idx in skipped:
-            add_message(run, f"WARNING: skipping unreadable COLVAR file: {input_files[idx]}")
-        if logfiles is not None:
-            logfiles = [logfiles[i] for i in range(len(logfiles)) if i not in skipped]
-    RM.check_acc_consistency(data, beta)
-    event = RM.get_event(data, maxlen=args.maxlen, maxtime=args.maxtime, num_events=args.numevents, log_files=logfiles, quiet=args.quiet)
-    run.data = data
-    run.event = event
+    `data` and `event` MUST be index-aligned; a mismatch silently produces a wrong
+    answer rather than an error, so callers that slice them do so together.
+    """
     run.results["ln(k_obs)"] = observed_log_rate(data, event)
 
     if args.bootstrap:
@@ -698,6 +659,86 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
         run.results["EATR CDF KS stat"] = ks_stat
         run.results["EATR CDF p value"] = p
         report_method_result(run, "EATR CDF", "EATR CDF ln k", ks_stat, p, args.bootstrap, bootstrap_ci, gamma_key="EATR CDF gamma")
+
+
+
+def analyze(args: argparse.Namespace) -> AnalysisResult:
+    # --threads controls the ProcessPoolExecutor worker count for bootstrap.
+    use_threaded_bootstrap = args.bootstrap and args.threads > 1
+    use_scipy_bootstrap = args.bootstrap and boots_avail and not args.std and not use_threaded_bootstrap
+    bootstrap_ci = use_scipy_bootstrap or use_threaded_bootstrap
+
+    beta = parse_beta(args)
+    validate_args(args)
+    plot_time_unit, _, _ = resolve_time_unit(args.plot_time_unit)
+    run = AnalysisResult(beta=beta, data=[], event=np.array([]))
+    run.results["plot_time_unit"] = plot_time_unit
+    # Record the subsampling/fitting options so a JSON is self-describing:
+    # results produced with different settings are not directly comparable.
+    if args.stride != 1:
+        run.results["stride"] = args.stride
+    if args.subsample_min_points:
+        run.results["subsample_min_points"] = args.subsample_min_points
+    if args.cdf_weights != "none":
+        run.results["cdf_weights"] = args.cdf_weights
+    if args.cdf_qmin > 0.0 or args.cdf_qmax < 1.0:
+        run.results["cdf_quantile_range"] = [args.cdf_qmin, args.cdf_qmax]
+
+    gamma_bounds = (args.gammamin, args.gammamax)
+    k_bounds = (np.exp(args.lnkmin), np.exp(args.lnkmax))
+    init_guess = args.initguess if args.initguess[0] is None else (np.exp(args.initguess[0]), args.initguess[1])
+
+    if args.bayesopt and bopt_avail:
+        add_message(run, "Bayesian Optimization module activated.")
+    elif args.bayesopt:
+        add_message(run, "The Bayesian Optimization module was not able to be loaded. Defaulting to local optimizers.")
+    if args.beta is not None or args.kt is not None:
+        report_beta(run)
+    else:
+        report_beta_from_temp(run, args.energyunit)
+    report_bootstrap_mode(run, args.bootstrap, bootstrap_ci, use_threaded_bootstrap)
+
+    if args.barrier > 0 and (args.ktrmle or args.ktrcdf or args.eatrmle or args.eatrcdf):
+        add_message(run, "WARNING: Running KTR and/or EATR on OPES simulations using this analysis script is not expected to work properly! You should instead use the EATR-OPES method (not published yet).")
+
+    seed = args.seed
+    random.seed(seed)
+    seed = seed if seed is None else seed + 1
+
+    input_files = list(args.input or []) + (_expand_globs(args.input_glob) if args.input_glob else [])
+    if args.logfiles_glob:
+        logfiles = list(args.logfiles or []) + _expand_globs(args.logfiles_glob)
+    else:
+        logfiles = list(args.logfiles) if args.logfiles else None
+    data, skipped, subsample_info = RM.get_data(input_files, args.tcol, args.vcol, acc_col=args.acol, maxbias_col=args.mcol, time_scale_factor=args.timeunit, threads=args.threads, stride=args.stride, subsample_min_points=args.subsample_min_points, return_info=True)
+    if args.stride != 1 or args.subsample_min_points:
+        # effective_stride can differ from the requested stride when
+        # --subsample-min-points lowers it, so record what was actually applied
+        # together with how many rows survived per trajectory.
+        run.results["subsampling"] = subsample_info
+    if skipped:
+        for idx in skipped:
+            add_message(run, f"WARNING: skipping unreadable COLVAR file: {input_files[idx]}")
+        if logfiles is not None:
+            logfiles = [logfiles[i] for i in range(len(logfiles)) if i not in skipped]
+    RM.check_acc_consistency(data, beta)
+    event = RM.get_event(data, maxlen=args.maxlen, maxtime=args.maxtime, num_events=args.numevents, log_files=logfiles, quiet=args.quiet)
+    run.data = data
+    run.event = event
+    _run_estimators(
+        run,
+        data,
+        event,
+        args,
+        beta=beta,
+        seed=seed,
+        k_bounds=k_bounds,
+        gamma_bounds=gamma_bounds,
+        init_guess=init_guess,
+        use_scipy_bootstrap=use_scipy_bootstrap,
+        use_threaded_bootstrap=use_threaded_bootstrap,
+        bootstrap_ci=bootstrap_ci,
+    )
 
     return run
 
