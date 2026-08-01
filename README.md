@@ -400,6 +400,16 @@ Three things worth knowing:
   the spread across them already measures the uncertainty, and nesting the
   bootstrap multiplies the cost by `--numboots`. Turn it on with
   `--subsample-bootstrap` if you want per-subset CIs too.
+
+  ⚠️ **This changes what the reported numbers mean.** With `--bootstrap` the
+  estimators report the *bootstrap mean*; without it they report the single
+  *point estimate*. For a skewed estimator like γ those differ systematically —
+  on a 20-of-80 subsample of real SN2 data, γ was 0.787 with the per-subset
+  bootstrap and 0.712 without, a gap of ~0.075 that has nothing to do with
+  subsampling. So subset values are **not** comparable with the top-level
+  full-set values unless the bootstrap setting matches. The output records
+  `"values_are_bootstrap_means"` in the `subsample` block so this is checkable
+  after the fact.
 * **Draws are without replacement**, because drawing *with* replacement at full
   size is what `--bootstrap` already does. `--subsample-replace` switches it.
 * **Subsets from one parent overlap** — 30 drawn from 40 share 75% of their

@@ -847,6 +847,12 @@ def analyze(args: argparse.Namespace) -> AnalysisResult:
                         rec[key] = value
                 records.append(rec)
         run.results["subsample"] = {
+            # With --bootstrap the estimators report the BOOTSTRAP MEAN; without it they
+            # report the single point estimate, and for a skewed estimator like gamma the
+            # two differ systematically (~0.075 in gamma on a 20-of-80 subsample of real
+            # SN2 data). Subset values are therefore NOT comparable with the top-level
+            # full-set values unless this flag matches how the full set was fitted.
+            "values_are_bootstrap_means": bool(args.subsample_bootstrap),
             "parent_n": parent_n,
             "sizes": sizes,
             "reps": args.subsample_reps,
